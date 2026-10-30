@@ -3,6 +3,7 @@
 #include "upscale/vk_temporal_upscaler.h"
 #include "shim/bb_env.h"
 #include "render/vk_gpu_profiler.h"
+#include "render/hdr_channel.h"
 #include "upscale/motion_history.h"
 #include "upscale/vk_scene_resolution.h"
 #include "upscale/ui_composition.h"
@@ -353,6 +354,11 @@ bool TemporalUpscaler::OnFrameStart() {
     }
     // The display pass of an upscaled frame reads the upscaled UI image.
     display_redirect = ui_phase;
+    // Native+ HDR (render/hdr_channel.cpp): the port's output-size images are in use — the
+    // chain's proxies carry the frame, the display redirect floats it. Known before the frame's
+    // draws: the pipeline keys and the proxy formats engage from this frame on.
+    HdrChannel::SetNative16Active(ui_phase);
+    HdrChannel::SetDisplayRedirect(ui_phase);
     ui_phase = false;
     ui_read_barrier = false;
     done_this_frame = false;

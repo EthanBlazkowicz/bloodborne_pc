@@ -129,6 +129,38 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         for (int a = 0; a < AspectCount; ++a) {
             if (value == AspectKey(a)) v.aspect = a;
         }
+    } else if (key == "hdr") {
+        v.hdr = i != 0;
+    } else if (key == "hdr_paper_white") {
+        v.hdr_paper_white =
+            Clamp(std::isfinite(f) ? f : HdrPaperWhiteDefault, HdrPaperWhiteMin, HdrPaperWhiteMax);
+    } else if (key == "hdr_peak") {
+        v.hdr_peak = Clamp(std::isfinite(f) ? f : HdrPeakDefault, HdrPeakMin, HdrPeakMax);
+    } else if (key == "hdr_peak_auto") {
+        v.hdr_peak_auto = i != 0;
+    } else if (key == "hdr_boost") {
+        v.hdr_boost = Clamp(std::isfinite(f) ? f : HdrBoostDefault, 0.0f, 1.0f);
+    } else if (key == "hdr_knee") {
+        v.hdr_knee = Clamp(std::isfinite(f) ? f : HdrKneeDefault, HdrKneeMin, HdrKneeMax);
+    } else if (key == "hdr_bloom") {
+        v.hdr_bloom = Clamp(std::isfinite(f) ? f : HdrBloomDefault, 0.0f, 100.0f);
+    } else if (key == "hdr_black_floor") {
+        v.hdr_black_floor =
+            Clamp(std::isfinite(f) ? f : HdrBlackFloorDefault, 0.0f, HdrBlackFloorMax);
+    } else if (key == "hdr_mode") {
+        // "psychov30": lantern.ini's value of the native+ mode in the source port (a file copied
+        // from there keeps working). Unknown values stay native+ (the point of the port).
+        bool known = value == "psychov30";
+        for (int m = 0; m < HdrModeCount; ++m) {
+            if (value == HdrModeNames[m]) {
+                v.hdr_mode = m;
+                known = true;
+            }
+        }
+        if (!known) {
+            std::printf("Settings: unknown hdr_mode '%s' (expected native+ or expand); native+\n",
+                        value.c_str());
+        }
     } else {
         for (int e = 0; e < EffectCount; ++e) {
             if (key == Effects[e].key) {
@@ -322,11 +354,21 @@ void Load() {
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
         {"BB_FRAME_GEN", "frame_generation"},       {"BB_FRAME_GEN_MULTIPLIER", "frame_generation_multiplier"},
         {"BB_LOW_LATENCY", "low_latency"},
+        // BB_HDR is also the swapchain's capability gate (shim/core/emulator_settings.h
+        // IsHdrAllowed), so 1 means both "the display may go HDR" and "HDR output on".
+        {"BB_HDR", "hdr"},                          {"BB_HDR_PAPER_WHITE", "hdr_paper_white"},
+        {"BB_HDR_PEAK", "hdr_peak"},                {"BB_HDR_BOOST", "hdr_boost"},
+        {"BB_HDR_MODE", "hdr_mode"},                {"BB_HDR_BLOOM", "hdr_bloom"},
+        {"BB_HDR_BLACK_FLOOR", "hdr_black_floor"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
             Set(v, key, value);
         }
+    }
+    // A peak set by hand for one run: the display's report must not override it.
+    if (std::getenv("BB_HDR_PEAK")) {
+        v.hdr_peak_auto = false;
     }
     v.startup_preset = v.preset;
     // Settings from before anti_aliasing: the game's AA switched off stays off.
@@ -346,6 +388,7 @@ void Load() {
         if (output && std::sscanf(output, "%dx%d", &w, &h) == 2) v.startup_output = {w, h};
     }
     v.startup_live_resolution = v.live_resolution;
+    v.startup_hdr = v.hdr;
 }
 
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
@@ -491,6 +534,17 @@ void Save() {
     put("frame_generation", FrameGenName(v.frame_generation));
     put("frame_generation_multiplier", std::to_string(v.frame_generation_multiplier.load()));
     put("low_latency", LowLatencyName(v.low_latency));
+    // HDR output (hdr_compare is deliberately absent: the comparison is not saved).
+    put("hdr", flag(v.hdr));
+    put("hdr_paper_white", fixed(v.hdr_paper_white, 0));
+    put("hdr_peak", fixed(v.hdr_peak, 0));
+    put("hdr_peak_auto", flag(v.hdr_peak_auto));
+    put("hdr_boost", fixed(v.hdr_boost, 2));
+    put("hdr_mode", HdrModeNames[std::clamp(v.hdr_mode.load(), 0, HdrModeCount - 1)]);
+    // Native+ (live).
+    put("hdr_knee", fixed(v.hdr_knee, 2));
+    put("hdr_bloom", fixed(v.hdr_bloom, 0));
+    put("hdr_black_floor", fixed(v.hdr_black_floor, 2));
     if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));
     }

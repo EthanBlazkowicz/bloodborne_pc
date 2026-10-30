@@ -49,6 +49,9 @@ struct Frame {
     vk::Fence present_done{};
     vk::Semaphore ready_semaphore{};
     u64 ready_tick = 0;
+    /// The frame image holds display-encoded pixels (the game's own PQ request,
+    /// platform/videoout). HDR output's frames stay SDR: they are encoded for the display at
+    /// present (RecordHdrPresent).
     bool is_hdr = false;
     u8 id = 0;
     /// Frame generation: the frames generated before this one (oldest first), encoded like it
@@ -113,6 +116,19 @@ private:
     /// Records the swapchain image's contents: black bars and `frame` (if any) blitted in.
     void RecordPresent(vk::CommandBuffer cmdbuf, const Frame* frame, vk::Image target,
                        vk::Extent2D extent, vk::Image source = {});
+    /// HDR output (bbport.ini hdr=1): the SDR composite and the menu layer encoded into the
+    /// swapchain's HDR image (shaders/hdr_output.frag). The game's own PQ frames keep
+    /// RecordPresent's blit: they are display-encoded already.
+    void RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, vk::Image target,
+                          vk::Extent2D extent, vk::Image source);
+    /// HDR output's SDR images (the composite; the menu layer), at the swapchain's size.
+    struct HdrTarget {
+        VmaAllocation allocation{};
+        vk::Image image{};
+        vk::ImageView view{};
+    };
+    void EnsureHdrTargets(vk::Extent2D extent);
+    void DestroyHdrTarget(HdrTarget& target);
     /// Shows `source` (or the frame's image) in the next swapchain image; false: none shown.
     /// `last`: the frame's final present (signals its fence).
     /// `generated`: an asynchronous generated frame (waited for already), encoded first into the
@@ -130,8 +146,14 @@ private:
     std::unique_ptr<Rasterizer> rasterizer;
     VideoCore::TextureCache& texture_cache;
     EncodePass encode_pass;
+    HdrOutputPass hdr_pass; ///< HDR output: the composite + menu encoded for the display
+    HdrTarget hdr_game{}, hdr_overlay{};
+    vk::Extent2D hdr_extent{};
     std::atomic<float> gamma{1.0f};
     std::atomic<bool> hdr{false};
+    /// The game's own PQ request (SetHDR, platform/videoout per flip). HDR output's frames are
+    /// SDR: the encode at present is theirs.
+    std::atomic<bool> game_hdr{false};
 
     std::vector<Frame> frames;
     Frame blank_frame;
