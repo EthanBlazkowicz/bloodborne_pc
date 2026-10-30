@@ -793,4 +793,104 @@ void FrameRateLimitSection(BbSettings::Values& s) {
     }
 }
 
+/// The menu's "HDR output" section (bbport.ini hdr=1, applied on restart; the rest is live).
+/// The game's SDR picture presented on an HDR display: HDR10 (PQ, BT.2020) or scRGB, SDR white
+/// at paper white, highlights towards the peak (render/presenter.cpp RecordHdrPresent).
+void HdrSection(BbSettings::Values& s) {
+    ImGui::SeparatorText(BbSettings::MenuText("HDR output", "Вывод HDR"));
+    Checkbox(BbSettings::MenuText("HDR output (restart required)", "Вывод HDR (после перезапуска)"),
+             s.hdr);
+    // What runs (the presenter reports): off, HDR10 or scRGB; and when the choice made here
+    // needs a restart first.
+    const int output = s.hdr_output.load(std::memory_order_relaxed);
+    if (s.hdr != s.startup_hdr) {
+        ImGui::TextDisabled("%s", BbSettings::MenuText(
+            "Applies after restarting the game (Windows HDR must be on: Settings > Display > Use HDR)",
+            "Применится после перезапуска игры (в Windows должен быть включён HDR: Параметры > "
+            "Дисплей > Использовать HDR)"));
+    } else if (!s.hdr.load()) {
+        ImGui::TextDisabled("%s", BbSettings::MenuText("Off", "Выключен"));
+    } else if (output == BbSettings::HdrOutputHdr10) {
+        ImGui::TextDisabled("%s", BbSettings::MenuText("Active: HDR10 (PQ, BT.2020)",
+                                                       "Активен: HDR10 (PQ, BT.2020)"));
+    } else if (output == BbSettings::HdrOutputScRgb) {
+        ImGui::TextDisabled("%s", BbSettings::MenuText("Active: scRGB (FP16)",
+                                                       "Активен: scRGB (FP16)"));
+    } else {
+        ImGui::TextDisabled("%s", BbSettings::MenuText(
+            "Not active: the display offers no HDR format (is Windows HDR on?)",
+            "Не активен: дисплей не предлагает HDR-формат (включён ли HDR в Windows?)"));
+    }
+    ImGui::BeginDisabled(!s.hdr.load());
+    {
+        const char* modes[BbSettings::HdrModeCount] = {"Expand", "Native+"};
+        const char* modes_ru[BbSettings::HdrModeCount] = {"Расширенный", "Native+"};
+        const int mode = std::clamp(s.hdr_mode.load(), 0, BbSettings::HdrModeCount - 1);
+        if (ImGui::BeginCombo(BbSettings::MenuText("HDR mode", "Режим HDR"),
+                              BbSettings::MenuText(modes[mode], modes_ru[mode]))) {
+            for (int i = 0; i < BbSettings::HdrModeCount; ++i) {
+                if (ImGui::Selectable(BbSettings::MenuText(modes[i], modes_ru[i]), i == mode)) {
+                    Store(s.hdr_mode, i, i != mode);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        Hint(BbSettings::MenuText(
+            "Native+: the light of the game's scene tone mapped to your display's peak (the "
+            "16-bit chain is being ported; expand runs meanwhile). Expand: the SDR picture's "
+            "brightest parts are stretched towards the peak. Live.",
+            "Native+: свет сцены игры тонмаппится к пику вашего дисплея (16-битная цепочка в "
+            "процессе переноса; пока работает расширенный режим). Расширенный: самые яркие "
+            "части SDR-картинки растягиваются к пику. Применяется сразу."));
+    }
+    {
+        // Paper white: how bright the game's white (and this menu) is; about 203 suits a dim
+        // room (the reference white of BT.2408).
+        Slider(BbSettings::MenuText("Paper white (game's white)", "Яркость белого игры"),
+               s.hdr_paper_white, BbSettings::HdrPaperWhiteMin, BbSettings::HdrPaperWhiteMax);
+        // Peak: the display's own value while it reports one and nothing was set by hand.
+        Checkbox(BbSettings::MenuText("Peak brightness from the display", "Пиковая яркость с дисплея"),
+                 s.hdr_peak_auto);
+        const float display_peak = s.hdr_display_peak.load(std::memory_order_relaxed);
+        const bool from_display =
+            s.hdr_peak_auto.load() && display_peak >= BbSettings::HdrPeakMin;
+        if (from_display) {
+            char text[64];
+            std::snprintf(text, sizeof(text), "%.0f nits", double(display_peak));
+            ImGui::TextDisabled("%s", text);
+        } else {
+            Slider(BbSettings::MenuText("Peak brightness", "Пиковая яркость"), s.hdr_peak,
+                   BbSettings::HdrPeakMin, BbSettings::HdrPeakMax);
+        }
+        Hint(BbSettings::MenuText(
+            "Paper white: how bright the game's white (and this menu) is. Peak: your display's "
+            "peak brightness (its HDR specs, or the Windows HDR Calibration app's once it has "
+            "run); turn the checkbox off to set it by hand. Highlight boost (Expand): 0 shows "
+            "the SDR picture as it is; higher values let the brightest parts (lamps, fire, the "
+            "moon) rise towards the peak. Changes apply live.",
+            "Яркость белого: насколько ярким будет белый игры (и это меню). Пиковая яркость: "
+            "максимум дисплея (его HDR-спецификация или результат калибровки Windows HDR); "
+            "снимите флажок, чтобы задать вручную. Усиление светов (расширенный режим): 0 "
+            "оставляет SDR-картинку как есть; выше — самые яркие части (фонари, огонь, луна) "
+            "поднимаются к пику. Применяется сразу."));
+        Slider(BbSettings::MenuText("Highlight boost (Expand)", "Усиление светов (расширенный)"),
+               s.hdr_boost, 0.0f, 1.0f);
+    }
+    {
+        // The comparison is deliberately not saved (the SDR half at paper white is for judging
+        // the settings, not a preference).
+        bool compare = s.hdr_compare.load(std::memory_order_relaxed);
+        if (ImGui::Checkbox(BbSettings::MenuText("Compare: SDR | HDR", "Сравнение: SDR | HDR"),
+                            &compare)) {
+            s.hdr_compare = compare;
+        }
+        Hint(BbSettings::MenuText(
+            "The left half of the screen as an SDR display shows the game (at paper white), the "
+            "right half in HDR, to judge the settings above. Not saved.",
+            "Левая половина экрана — как игру показывает SDR-дисплей (при белом SDR), правая — "
+            "в HDR, чтобы оценить настройки выше. Не сохраняется."));
+    }
+    ImGui::EndDisabled();
+}
+
 } // namespace BbOverlay::detail

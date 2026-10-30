@@ -10,6 +10,7 @@
 #include "common/assert.h"
 #include "common/serdes.h"
 #include "render/gcn_to_vk.h"
+#include "render/hdr_channel.h"
 #include "render/pipeline.h"
 #include "render/scheduler.h"
 #include "shader/backend/spirv/emit_spirv_discard_frag.h"
@@ -107,10 +108,14 @@ void Pipeline::CreateLayouts(vk::ShaderStageFlags push_stages, const char* kind,
                kind, vk::to_string(set_result));
     desc_layout = std::move(set_layout);
 
+    // The game's 128-byte push prefix; native+ extends the range for bb_hdr/bb_hdr2 (the GLSL
+    // of render/shaders/hdr/ hard-codes the offsets). Native+ is chosen at start, so a
+    // session's pipelines all declare the same size.
+    push_size = HdrChannel::Enabled() ? sizeof(Shader::PushData) : Shader::PushData::GameSize;
     const vk::PushConstantRange push_constants{
         .stageFlags = push_stages,
         .offset = 0,
-        .size = sizeof(Shader::PushData),
+        .size = push_size,
     };
     const vk::DescriptorSetLayout set = *desc_layout;
     auto [layout_result, layout] = device.createPipelineLayoutUnique({
@@ -132,8 +137,9 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
     const auto stage_flags = IsCompute() ? vk::ShaderStageFlagBits::eCompute : AllGraphicsStageBits;
     const vk::PipelineLayout layout = *pipeline_layout;
-    scheduler.Record([layout, stage_flags, push_data](vk::CommandBuffer cmdbuf) {
-        cmdbuf.pushConstants(layout, stage_flags, 0u, sizeof(push_data), &push_data);
+    scheduler.Record([layout, stage_flags, push_data, push_size = this->push_size](
+                         vk::CommandBuffer cmdbuf) {
+        cmdbuf.pushConstants(layout, stage_flags, 0u, push_size, &push_data);
     });
     if (set_writes.empty()) {
         return;
@@ -519,6 +525,8 @@ GraphicsPipeline::GraphicsPipeline(
     std::array<vk::Format, Shader::IR::NumRenderTargets> color_formats;
     for (u32 i = 0; i < key.num_color_attachments; ++i) {
         const auto& color = key.color_buffers[i];
+        // Native+ HDR reaches this as Format16_16_16_16/Float (pipeline_key.cpp): the chain's
+        // RGBA16F proxy attachment.
         const auto format = instance.GetSupportedFormat(
             GcnToVk::SurfaceFormat(color.data_format, color.num_format),
             vk::FormatFeatureFlagBits2::eColorAttachment);
@@ -584,6 +592,28 @@ GraphicsPipeline::GraphicsPipeline(
     pipeline = CheckPipeline(device.createGraphicsPipelineUnique(pipeline_cache, pipeline_ci),
                              preloading, "graphics");
     SetObjectName(device, *pipeline, "Graphics Pipeline {}", debug_name);
+
+    // Native+ HDR transport (render/hdr_channel.cpp): the composite's delta pass as a second
+    // pipeline — the game's stages with the fragment swapped for its delta shader, the same
+    // state and layout. Built only where the game's own fragment is present (the delta reads
+    // its inputs); pipeline-cache preloads arrive before their shaders were recompiled, so
+    // those (and everything else without a delta) run without it.
+    if (!preloading && infos[u32(Shader::SwStage::Fragment)]) {
+        const u64 ps_hash = infos[u32(Shader::SwStage::Fragment)]->pgm_hash;
+        if (const vk::ShaderModule delta = HdrChannel::CompositeModule(instance, ps_hash)) {
+            const u32 fragment_at = u32(shaders.size()) - 1;
+            ASSERT(shaders[fragment_at].stage == vk::ShaderStageFlagBits::eFragment);
+            shaders[fragment_at] = vk::PipelineShaderStageCreateInfo{
+                .pNext = shaders[fragment_at].pNext,
+                .stage = vk::ShaderStageFlagBits::eFragment,
+                .module = delta,
+                .pName = "main",
+            };
+            hdr_pipeline = CheckPipeline(device.createGraphicsPipelineUnique(pipeline_cache, pipeline_ci),
+                                         preloading, "HDR delta");
+            SetObjectName(device, *hdr_pipeline, "HDR Delta Pipeline {}", debug_name);
+        }
+    }
 }
 
 GraphicsPipeline::~GraphicsPipeline() = default;

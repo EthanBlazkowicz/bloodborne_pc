@@ -319,6 +319,7 @@ void Menu() {
     const bool taa = UpscalerSection(s);
     ReactiveMaskSection(s, taa);
     OutputSection(s);
+    HdrSection(s);
     GameEffectsSection(s);
     FrameRateLimitSection(s);
     ImGui::SeparatorText(BbSettings::MenuText("Camera (right stick)", "Камера (правый стик)"));

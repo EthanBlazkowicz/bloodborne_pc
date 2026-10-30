@@ -7,6 +7,7 @@
 
 #include "upscale/vk_temporal_upscaler.h"
 #include "shim/bb_env.h"
+#include "render/hdr_channel.h"
 #include "render/vk_gpu_profiler.h"
 #include "upscale/motion_history.h"
 #include "upscale/vk_scene_resolution.h"
@@ -249,7 +250,10 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         scheduler.Finish();
         display.views.clear();
         std::printf("Display: host buffer %ux%u (live)\n", ui_width, ui_height);
-        display.format = image.info.pixel_format;
+        // Native+ HDR (render/hdr_channel.cpp): the display image is the chain's last target —
+        // float, so the frame keeps the light above the game's white to the encode.
+        display.format = HdrChannel::Native16() ? HdrChannel::Native16Format
+                                                : image.info.pixel_format;
         display.width = ui_width;
         display.height = ui_height;
         display.image = VideoCore::HostImage(device, instance.GetAllocator());
@@ -286,7 +290,10 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
     });
     display.valid = true;
-    target = {Mirror(vk::Image(display.image), display.views, view_info.format, {}),
+    // The game's display copy draws through its own (rewritten) shader: its pipeline key takes
+    // the display image's float format via DisplayUpgraded.
+    target = {Mirror(vk::Image(display.image), display.views,
+                     HdrChannel::Native16() ? HdrChannel::Native16Format : view_info.format, {}),
               vk::ImageLayout::eGeneral, ui_width, ui_height};
     return true;
 }
