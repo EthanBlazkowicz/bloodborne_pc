@@ -315,7 +315,9 @@ std::optional<std::vector<u32>> BuildComposite(const TonemapVariant& v, std::spa
     SetSpecBool(spv, 22, v.scene_mat);
     SetSpecBool(spv, 23, v.glow_mat);
     SetSpecBool(spv, 24, v.grade);
-    SetSpecBool(spv, 25, true); // the 16-bit chain (this port's only mode)
+SetSpecBool(spv, 25, true); // the 16-bit chain (this port's only mode)
+    // Vanilla+ as the tone mapper (hdr_mode=native+).
+    SetSpecBool(spv, 26, true);
     return spv;
 }
 

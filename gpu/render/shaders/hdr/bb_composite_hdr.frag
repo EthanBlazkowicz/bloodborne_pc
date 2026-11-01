@@ -98,6 +98,9 @@ layout(constant_id = 24) const bool BB_GRADE = true;
 
 layout(constant_id = 25) const bool BB_OUTPUT_DELTA = false;
 
+// Mode 5 (native+): Vanilla+ as the tone mapper (RenoDX's, souperman9's parameters).
+layout(constant_id = 26) const bool BB_VANILLA_PLUS = false;
+
 
 
 // The game shader's constant buffer (decorations copied from the variant): a storage buffer from
@@ -729,9 +732,9 @@ void main() {
 
     }
 
-    bool psycho_scene = BB_OUTPUT_DELTA && push_data.bb_hdr2a.x != 0u;
+bool psycho_scene = BB_OUTPUT_DELTA; // never SDR because a live push did not arrive
 
-    bool vanilla_plus = psycho_scene && (bb_choice(push_data.bb_hdr2b.z, 1) & 4) != 0;
+bool vanilla_plus = psycho_scene && BB_VANILLA_PLUS;
 
     bool has_hdr = false;
 
@@ -870,7 +873,7 @@ void main() {
             } else if (m15 > 1.02) {
                 shown = vec3(1.0, 0.0, 1.0);
             }
-            frag_color0 = vec4(shown - game_out, 0.0);
+frag_color0 = vec4((shown - game_out).zyx, 0.0);
             return;
         }
 
@@ -895,7 +898,7 @@ void main() {
 
         if (push_data.bb_hdr.z == 6u) {
 
-            frag_color0 = vec4(vec3(0.5) - game_out + 4.0 * delta, 0.0);
+frag_color0 = vec4((vec3(0.5) - game_out + 4.0 * delta).zyx, 0.0);
 
             return;
 
@@ -911,7 +914,7 @@ void main() {
 
                                    : clamp(x, 0.0, 1.0);
 
-            frag_color0 = vec4(in_enc - game_out, 0.0);
+frag_color0 = vec4((in_enc - game_out).zyx, 0.0);
 
             return;
 
@@ -919,7 +922,10 @@ void main() {
 
         // PsychoV30 (scene) replaces the game's curve, so it may also darken.
 
-        frag_color0 = vec4((scaled || psycho_scene) ? delta : max(delta, 0.0), 0.0);
+// In the target's order, as the game's own pixel is: the conversion to the game's
+// channel order is the colour table's, once, for the whole frame (bb_color_grading.frag).
+vec3 delta_t = delta.zyx;
+frag_color0 = vec4((scaled || psycho_scene) ? delta_t : max(delta_t, 0.0), 0.0);
 
         // Chain probe (in-game menu, test; bb_hdr.z set for this draw by bbport): green where
 
