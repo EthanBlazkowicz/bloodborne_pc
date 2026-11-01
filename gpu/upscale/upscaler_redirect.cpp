@@ -414,6 +414,18 @@ bool TemporalUpscaler::RedirectSampled(VideoCore::ImageId image,
             if (ChainImage* chain = ChainImageFor(sampled.info.guest_address,
                                                   sampled.info.size.width,
                                                   sampled.info.size.height)) {
+                {
+                    static std::mutex told_mutex;
+                    static std::unordered_set<VAddr> told;
+                    std::scoped_lock lock{told_mutex};
+                    if (told.size() < 12 && told.insert(sampled.info.guest_address).second) {
+                        std::printf("HDR chain sample: %#llx <- the port's float image %#llx "
+                                    "(%ux%u)\n",
+                                    (unsigned long long)sampled.info.guest_address,
+                                    (unsigned long long)(VkImage)vk::Image(chain->image),
+                                    chain->width, chain->height);
+                    }
+                }
                 scheduler.EndRendering();
                 const vk::ImageMemoryBarrier2 to_read{
                     .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
