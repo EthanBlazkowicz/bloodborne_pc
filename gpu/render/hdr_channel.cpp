@@ -564,6 +564,14 @@ bool HdrChannel::ChainImage(VAddr address, u32 width, u32 height, vk::Format for
     return Upgraded(address, width, height, format);
 }
 
+bool HdrChannel::ChainTargetAddress(VAddr address) {
+    if (!Native16Active()) {
+        return false;
+    }
+    std::scoped_lock lock{native16_mutex};
+    return native16_targets.contains(address);
+}
+
 u32 HdrChannel::ChainProbe() {
     const int setting = int(BbSettings::Get().hdr_probe.load(std::memory_order_relaxed));
     if (setting >= 1 && setting <= 17) {

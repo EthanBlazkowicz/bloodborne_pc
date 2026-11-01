@@ -219,6 +219,45 @@ vk::ImageView TemporalUpscaler::Mirror(vk::Image image, std::vector<MirrorView>&
     return handle;
 }
 
+TemporalUpscaler::ChainImage* TemporalUpscaler::ChainImageFor(VAddr address, u32 width,
+                                                              u32 height) {
+    if (!address || !width || !height) {
+        return nullptr;
+    }
+    std::scoped_lock lock{chain_mutex};
+    for (auto& entry : chain_images) {
+        if (entry.address == address && entry.width == width && entry.height == height) {
+            return &entry;
+        }
+    }
+    // One image per address: what the chain writes above white has to survive the reads of it
+    // (the display copy reads this image back with texelFetch, which never sees a proxy).
+    if (chain_images.size() >= 8) {
+        return nullptr;
+    }
+    ChainImage entry{};
+    entry.address = address;
+    entry.width = width;
+    entry.height = height;
+    entry.format = HdrChannel::Native16Format;
+    scheduler.Finish();
+    entry.image = VideoCore::HostImage(instance.GetDevice(), instance.GetAllocator());
+    entry.image.Create(vk::ImageCreateInfo{
+        .imageType = vk::ImageType::e2D,
+        .format = entry.format,
+        .extent = {width, height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = vk::SampleCountFlagBits::e1,
+        .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
+                 vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
+    });
+    std::printf("HDR chain: %#llx is a float image of the port's own (%ux%u RGBA16F)\n",
+                (unsigned long long)address, width, height);
+    chain_images.push_back(std::move(entry));
+    return &chain_images.back();
+}
+
 bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
                                      const VideoCore::ImageViewInfo& view_info, Target& target) {
     if (ui_phase && color == ui_color) {
@@ -241,6 +280,20 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
     }
     const auto& image = texture_cache.GetImage(color);
     const VAddr address = image.info.guest_address;
+    // Native+ HDR: a chain target is drawn into a float image of its own (see ChainImageFor)
+    // instead of the guest's 8-bit one, which clamps what the chain carries above white.
+    if (HdrChannel::ChainTargetAddress(address) && bb_env("BB_HDR_CHAIN_IMAGE")) {
+        if (!HdrChannel::Native16()) {
+            return false;
+        }
+        if (ChainImage* chain = ChainImageFor(address, image.info.size.width,
+                                              image.info.size.height)) {
+            target = {Mirror(vk::Image(chain->image), chain->views, chain->format, {}),
+                      vk::ImageLayout::eGeneral, chain->width, chain->height, true};
+            return true;
+        }
+        return false;
+    }
     if (!FrameCapture::IsDisplayBuffer(address)) {
         display_redirect = false;
         return false;
@@ -339,9 +392,44 @@ bool TemporalUpscaler::IsUiColorAddress(VAddr address) const {
     return ui_color && texture_cache.GetImage(ui_color).info.guest_address == address;
 }
 
+bool TemporalUpscaler::RedirectsSampled(VideoCore::ImageId image) const {
+    if (display_redirect && image == ui_color) {
+        return true;
+    }
+    // Native+ HDR: the chain's targets (float images of their own, see ChainImageFor).
+    return HdrChannel::Native16() && bb_env("BB_HDR_CHAIN_IMAGE") &&
+           HdrChannel::ChainTargetAddress(texture_cache.GetImage(image).info.guest_address);
+}
+
 bool TemporalUpscaler::RedirectSampled(VideoCore::ImageId image,
                                        const VideoCore::ImageViewInfo& info, vk::ImageView& view,
                                        vk::ImageLayout& layout) {
+    // Native+ HDR: a chain target is sampled from its float image, not the guest's 8-bit one.
+    if (HdrChannel::Native16() && bb_env("BB_HDR_CHAIN_IMAGE")) {
+        const auto& sampled = texture_cache.GetImage(image);
+        if (HdrChannel::ChainTargetAddress(sampled.info.guest_address)) {
+            if (ChainImage* chain = ChainImageFor(sampled.info.guest_address,
+                                                  sampled.info.size.width,
+                                                  sampled.info.size.height)) {
+                scheduler.EndRendering();
+                const vk::ImageMemoryBarrier2 to_read{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                    .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                    .oldLayout = vk::ImageLayout::eGeneral,
+                    .newLayout = vk::ImageLayout::eGeneral,
+                    .image = vk::Image(chain->image),
+                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                };
+                scheduler.CommandBuffer().pipelineBarrier2(
+                    {.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_read});
+                view = Mirror(vk::Image(chain->image), chain->views, chain->format, {});
+                layout = vk::ImageLayout::eGeneral;
+                return true;
+            }
+        }
+    }
     if (!display_redirect || image != ui_color) {
         return false;
     }

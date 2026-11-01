@@ -55,6 +55,9 @@ public:
     static bool Upgraded(VAddr address, u32 width, u32 height, vk::Format format);
     /// Whether a texture cache image is one of the chain's 16-bit targets.
     static bool ChainImage(VAddr address, u32 width, u32 height, vk::Format format);
+    /// Native+: whether a draw marked `address` as one of the chain's targets (it carries what
+    /// is above the game's white, so it is replaced in place by an RGBA16F image).
+    static bool ChainTargetAddress(VAddr address);
     /// The display buffers (the game's last copy) when the port draws them at output size.
     static void SetDisplayRedirect(bool redirect);
     static bool DisplayUpgraded(VAddr address, vk::Format format);

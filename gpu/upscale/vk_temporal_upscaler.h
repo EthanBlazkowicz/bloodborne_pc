@@ -26,6 +26,7 @@
 #include "upscale/vk_dlss.h"
 #include "upscale/vk_fsr4.h"
 #include "textures/image.h"
+#include "render/hdr_channel.h"
 
 struct FfxVkPortableUpscaleContext;
 
@@ -65,6 +66,13 @@ void DumpUpscalerPeaksIfDue(const Instance& instance, Scheduler& scheduler,
                             vk::Image output, u32 out_w, u32 out_h);
 void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
                          vk::Image image, u32 width, u32 height, vk::Format format);
+
+/// A view over one of the port's own images, per format and component mapping.
+struct MirrorView {
+        vk::Format format;
+        vk::ComponentMapping mapping;
+        vk::UniqueImageView view;
+    };
 
 class TemporalUpscaler {
 public:
@@ -147,10 +155,25 @@ public:
     /// A sampled image replaced by the upscaled frame (the display pass).
     bool RedirectSampled(VideoCore::ImageId image, const VideoCore::ImageViewInfo& info,
                          vk::ImageView& view, vk::ImageLayout& layout);
+
+    /// Native+ (render/hdr_channel.cpp): the chain's targets are the guest's 8-bit images, so
+    /// what the chain carries above the game's white is clamped at the write. Each such address
+    /// gets an RGBA16F image of its own here, used for the draw and for every sample of it — the
+    /// same treatment the display buffer gets from RedirectColor/RedirectSampled.
+    struct ChainImage {
+        VAddr address{};
+        VideoCore::HostImage image;
+        std::vector<MirrorView> views;
+        vk::Format format{};
+        u32 width{};
+        u32 height{};
+    };
+    /// The float image for `address` (created, sized, sized to `width` x `height`), or null.
+    ChainImage* ChainImageFor(VAddr address, u32 width, u32 height);
+    std::vector<ChainImage> chain_images;
+    std::mutex chain_mutex;
     /// Whether RedirectSampled would replace `image` (it may record a barrier then).
-    [[nodiscard]] bool RedirectsSampled(VideoCore::ImageId image) const {
-        return display_redirect && image == ui_color;
-    }
+    [[nodiscard]] bool RedirectsSampled(VideoCore::ImageId image) const;
 
     /// Presenter: the output-size display buffer standing in for the guest one at `address`.
     struct Display {
@@ -315,11 +338,7 @@ private:
     vk::Format ui_format = vk::Format::eUndefined;
     vk::Format ui_depth_format = vk::Format::eUndefined;
     /// Views of the port's images in the formats/swizzles the game's views use.
-    struct MirrorView {
-        vk::Format format;
-        vk::ComponentMapping mapping;
-        vk::UniqueImageView view;
-    };
+    
     vk::ImageView Mirror(vk::Image image, std::vector<MirrorView>& views, vk::Format format,
                          vk::ComponentMapping mapping);
     std::vector<MirrorView> ui_views;
