@@ -914,6 +914,9 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
                  (native16 && settings.hdr_probe.load(std::memory_order_relaxed) == 13
                       ? HdrOutputPass::FlagPeakView
                       : 0u) |
+                 (native16 && settings.hdr_probe.load(std::memory_order_relaxed) == 16
+                      ? HdrOutputPass::FlagPeakLadder
+                      : 0u) |
                  (native16 && frame && frame->hdr_linear ? HdrOutputPass::FlagLinearFrame : 0u) |
                  (native16 && frame && frame->hdr_snapshot_ui_mask
                       ? HdrOutputPass::FlagUiMask

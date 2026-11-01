@@ -859,6 +859,20 @@ bool vanilla_plus = psycho_scene && BB_VANILLA_PLUS;
 
         }
 
+        // Chain probe 16 (test): two bands of known above-white written into the target (2x and
+        // 4x the game's white) between the composite and the encode, so the encoder's peak ladder
+        // (hdr_output.frag, the same hdr_probe 16) reads back whether they survive the chain, and
+        // the ReShade readout shows their value.
+        if (push_data.bb_hdr.z == 16u || push_data.bb_hdr.z == 5u) {
+            const float px = gl_FragCoord.x;
+            const float py = gl_FragCoord.y;
+            if (py > 700.0 && py < 1300.0 && px < 1800.0) {
+                const float level = px < 900.0 ? 2.0 : 4.0;
+                frag_color0 = vec4(vec3(level) - game_out, 0.0);
+                return;
+            }
+        }
+
         // Chain probe 15 (test): this draw's HDR output against the game's white, in the same
         // colours as the final pass's peak view (grey: the output never goes above white —
         // magenta past 1.02x, blue past 2x, red past 4x). The delta is written as

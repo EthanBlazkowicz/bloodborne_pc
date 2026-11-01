@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The texture cache: construction, lookup, overlap resolution, bindings and samplers.
 #include "textures/texture_cache.h"
+#include "render/hdr_channel.h"
 #include "shim/bb_env.h"
 #include "textures/image_spares.h"
 
@@ -507,6 +508,18 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
                                      bool refresh) {
     Image& image = slot_images[image_id];
     WatchImage(image, refresh ? "texture (refresh)" : "texture (no refresh)");
+    // Native+ HDR (render/hdr_channel.cpp): a chain image's backing is RGBA16F whatever the guest
+    // format says, and a *sampled* view in the guest's 8-bit format clamps what the chain carries
+    // above the game's white. Measured: 2x and 4x of white reached the display copy as exactly
+    // white, so the delta the composite adds above white never arrived. Render-target and storage
+    // views keep their own paths (their pipelines are built for the image's format).
+    ImageViewInfo sampled = desc.view_info;
+    if (desc.type == BindingType::Texture && !sampled.is_storage && image.backing &&
+        image.backing->image.image_ci.format == Vulkan::HdrChannel::Native16Format &&
+        Vulkan::HdrChannel::ChainImage(image.info.guest_address, image.info.size.width,
+                                       image.info.size.height, image.info.pixel_format)) {
+        sampled.format = Vulkan::HdrChannel::Native16Format;
+    }
     if (desc.type == BindingType::Storage) {
         image.flags |= ImageFlagBits::GpuModified;
         image.gpu_write_tick = CurrentTick();
@@ -539,17 +552,17 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
     // Levels not uploaded yet are not sampled: the view starts at the first one there (its min
     // LOD), and no memo keeps it past the rest's upload.
     if (image.resident_level != 0 && whole_chain) {
-        ImageViewInfo partial = desc.view_info;
+        ImageViewInfo partial = sampled;
         partial.min_lod = std::max<u32>(partial.min_lod, u32(image.resident_level) * 256);
         return image.FindView(partial);
     }
     if (!memo || BbToggle::Disabled(BbToggle::TextureViewMemo) || image.resident_level != 0) {
-        return image.FindView(desc.view_info);
+        return image.FindView(sampled);
     }
     if (memo->image_id == image_id && memo->backing == image.backing && memo->view_id) {
         return slot_image_views[memo->view_id];
     }
-    ImageView& view = image.FindView(desc.view_info);
+    ImageView& view = image.FindView(sampled);
     const auto& ids = image.backing->image_view_ids;
     const u32 last = image.backing->last_view;
     memo->image_id = image_id;

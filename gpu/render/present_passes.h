@@ -75,6 +75,10 @@ public:
     /// dim grey below it, magenta past 1x, blue past 2x, red past 4x. The one reading of the peak
     /// that needs no readback: an above-white frame shows it on the screen.
     static constexpr u32 FlagPeakView = 128;
+    /// Native+ (hdr_probe 16): five squares in the frame's top right, white where the
+    /// encoder's input exceeds 1x, 2x, 4x, 8x and 16x the game's white. A reading of the peak
+    /// that survives any screenshot or tonemapping: white/black, not a level.
+    static constexpr u32 FlagPeakLadder = 256;
 
     /// `output_format`: the HDR swapchain's format.
     void Create(vk::Device device, vk::Format output_format);

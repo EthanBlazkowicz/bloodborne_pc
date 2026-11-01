@@ -79,6 +79,18 @@ void main() {
     // takes it as it comes. Converting here would also convert the UI, which the game composites
     // through this same shader.
     vec3 o = vec3(brightness(v.x, 0.0), brightness(v.y, 1.0), brightness(v.z, 2.0));
+    // Chain probe 17 (test): bands of known above-white (2x and 4x) written as this pass's own
+    // output, past the brightness table. The encoder's readout then says whether the table's
+    // above-white path is what compresses them, or the upscaler after it.
+    if (push_data.bb_hdr.z == 17u) {
+        const float px = gl_FragCoord.x;
+        const float py = gl_FragCoord.y;
+        if (py > 700.0 && py < 1300.0 && px < 1800.0) {
+            frag_color0 = vec4(vec3(px < 900.0 ? 2.0 : 4.0), 1.0);
+            return;
+        }
+    }
+
     // Chain probe 14 (test): what this pass receives, by how far above the game's white it is —
     // the composite's target as the display buffer takes it. Grey: nothing above white
     // (magenta past 1.02x, blue past 2x, red past 4x).

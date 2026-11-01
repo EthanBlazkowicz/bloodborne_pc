@@ -50,6 +50,8 @@ const uint FLAG_LINEAR_FRAME = 64u;
 // Native+ (hdr_probe 13): the linear the encode is about to multiply by paper white, by how far
 // above the game's white it is. Magenta past 1x, blue past 2x, red past 4x, dim grey below.
 const uint FLAG_PEAK_VIEW = 128u;
+// Native+ (hdr_probe 16): the peak ladder, drawn over the frame's top right corner.
+const uint FLAG_PEAK_LADDER = 256u;
 
 // Linear brightness (SDR white = 1) above which the highlights are expanded: high, so large
 // bright areas (fog, sky) stay near paper white and only lamps, fire and sparks reach the peak.
@@ -156,6 +158,20 @@ void main() {
             shown = vec3(1.0, 0.0, 1.0);
         }
         linear = shown;
+    }
+    if ((hdr.flags & FLAG_PEAK_LADDER) != 0u) {
+        // Five squares, each white when the encoder's input is above 1x, 2x, 4x, 8x and 16x the
+        // game's white (1x is paper white: 203 nits, 2x is 406, 4x is 812). White or black only,
+        // so a screenshot of any kind reads it.
+        const ivec2 frame = textureSize(game, 0);
+        const ivec2 p = ivec2(gl_FragCoord.xy);
+        const ivec2 origin = ivec2(frame.x - 520, 40);
+        const int i = (p.x - origin.x) / 96;
+        if (p.y >= origin.y && p.y < origin.y + 80 && i >= 0 && i < 5 &&
+            (p.x - origin.x) - i * 96 < 80) {
+            const float m = max(linear.r, max(linear.g, linear.b));
+            linear = m > exp2(float(i)) * 1.001 ? vec3(1.0) : vec3(0.0);
+        }
     }
     if ((hdr.flags & FLAG_DEBUG) != 0u) {
         // The picture in grey at a third of paper white, the expansion over it from blue (a

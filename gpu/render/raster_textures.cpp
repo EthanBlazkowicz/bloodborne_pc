@@ -11,6 +11,7 @@
 #include "bbport_button_prompts.h"
 #include <unordered_set>
 #include <mutex>
+#include "render/hdr_channel.h"
 #include "render/raster_internal.h"
 #include "upscale/vk_frame_generation.h"
 
@@ -458,8 +459,15 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
 
             // bbport: a proxied scene image sampled with normalized coordinates reads the proxy:
             // no resample to the native size (the native image is not touched).
+            // Native+ HDR: a chain image sampled with normalized coordinates must read the 16F
+            // image itself. Its proxy is filled from the guest's data (or remade late), and the
+            // display copy read what is above white through it as exactly white (measured).
+            const bool chain_sampled =
+                Vulkan::HdrChannel::Native16Active() &&
+                Vulkan::HdrChannel::ChainImage(image.info.guest_address, image.info.size.width,
+                                               image.info.size.height, image.info.pixel_format);
             if (binding_proxy_ok[binding_index] && !is_storage && !binding.force_general &&
-                !binding.is_target &&
+                !binding.is_target && !chain_sampled &&
                 !(upscaler->Enabled() && upscaler->RedirectsSampled(image_id))) {
                 if (const auto proxy = scene_targets->SampleProxy(image, desc.view_info)) {
                     image.usage.texture = 1u;
