@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -113,16 +114,32 @@ struct DumpBuffer {
 };
 std::mutex dump_pool_mutex;
 std::vector<DumpBuffer> dump_pool;
+/// Writes waiting for their copy to have run. The scheduler's priority operations reported the
+/// copies of the frame being recorded (files of zeros): a dump's write runs at the next dump,
+/// seconds later, when the submission that copied is certainly complete.
+std::mutex dump_write_mutex;
+std::vector<std::function<void()>> dump_writes;
 } // namespace
 
 /// Copies `images` into host buffers after the commands recorded so far and writes them to
 /// files once the GPU is done.
 void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
-                int frame, std::initializer_list<DumpImage> images) {
+                  int frame, std::initializer_list<DumpImage> images) {
+    (void)scheduler;
     static const std::string dir = [] {
         const char* env = bb_env("BB_DUMP_DIR");
         return std::string{env && env[0] ? env : "out/dump"};
     }();
+    {
+        std::vector<std::function<void()>> writes;
+        {
+            std::scoped_lock lock{dump_write_mutex};
+            writes.swap(dump_writes);
+        }
+        for (auto& write : writes) {
+            write();
+        }
+    }
     const vk::MemoryBarrier2 before{
         .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
         .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
@@ -175,16 +192,44 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
         char path[512];
         std::snprintf(path, sizeof(path), "%s/f%03d_%s_%ux%u_%s.raw", dir.c_str(), frame,
                       image.name, image.width, image.height, image.format);
-        scheduler.DeferPriorityOperation(
+        auto write =
             [allocator = instance.GetAllocator(), pooled, file = std::string{path},
-             width = image.width, height = image.height] {
+             width = image.width, height = image.height, max_only = image.max_only] {
                 const auto& [buffer, allocation, info, size, float16] = pooled;
                 vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
-                if (FILE* f = std::fopen(file.c_str(), "wb")) {
-                    if (float16) {
-                        // RGBA16F: the texels are halfs of the game's encoding, possibly above
-                        // its white — clamped into 8-bit RGBA for viewing.
-                        const auto* halfs = static_cast<const unsigned short*>(info.pMappedData);
+                if (float16) {
+                    // RGBA16F: the texels are halfs of the game's encoding, possibly above its
+                    // white. max_only skips the 8-bit conversion: the peak is the number.
+                    const auto* halfs = static_cast<const unsigned short*>(info.pMappedData);
+                    float max_value = 0.0f;
+                    const auto scan = [&](size_t pixels) {
+                        // RGB only (the frames' alpha is opaque and would hide the peak), and
+                        // finite halves only: the padding texels of an aligned target can be
+                        // NaN, which read as 131008 and looked like a huge peak.
+                        size_t nan = 0;
+                        for (size_t p = 0; p < pixels; ++p) {
+                            for (int c = 0; c < 3; ++c) {
+                                const unsigned short h = halfs[p * 4 + unsigned(c)];
+                                const int exponent = int((h >> 10) & 0x1F) - 15;
+                                const unsigned mantissa = h & 0x3FF;
+                                if (exponent == 16) { // inf/nan
+                                    ++nan;
+                                    continue;
+                                }
+                                if (exponent > 0) {
+                                    max_value = std::max(
+                                        max_value,
+                                        std::ldexp(1.0f + float(mantissa) / 1024.0f, exponent));
+                                }
+                            }
+                        }
+                        if (nan != 0) {
+                            std::printf("Dump: %zu non-finite channel values skipped\n", nan);
+                        }
+                    };
+                    if (max_only) {
+                        scan(size_t(width) * height);
+                    } else if (FILE* f = std::fopen(file.c_str(), "wb")) {
                         std::vector<unsigned char> rgba8(size_t(width) * height * 4);
                         for (size_t p = 0; p < rgba8.size() / 4; ++p) {
                             for (int c = 0; c < 3; ++c) {
@@ -197,33 +242,28 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
                                         ? 0.0f
                                         : sign * std::ldexp(1.0f + float(mantissa) / 1024.0f,
                                                             exponent);
-                                rgba8[p * 4 + unsigned(c)] =
-                                    static_cast<unsigned char>(std::clamp(value, 0.0f, 1.0f) *
-                                                               255.0f);
+                                rgba8[p * 4 + unsigned(c)] = static_cast<unsigned char>(
+                                    std::clamp(value, 0.0f, 1.0f) * 255.0f);
                             }
                             rgba8[p * 4 + 3] = 255;
                         }
                         std::fwrite(rgba8.data(), 1, rgba8.size(), f);
-                        float max_value = 0.0f;
-                        for (size_t p = 0; p < rgba8.size() / 4; ++p) {
-                            for (int c = 0; c < 3; ++c) {
-                                const unsigned short h = halfs[p * 4 + unsigned(c)];
-                                const int exponent = int((h >> 10) & 0x1F) - 15;
-                                const unsigned mantissa = h & 0x3FF;
-                                if (exponent > 0) {
-                                    max_value = std::max(max_value,
-                                        std::ldexp(1.0f + float(mantissa) / 1024.0f, exponent));
-                                }
-                            }
-                        }
-                        const std::string sidecar = file + ".max";
-                        if (FILE* m = std::fopen(sidecar.c_str(), "w")) {
-                            std::fprintf(m, "%.4f\n", max_value);
-                            std::fclose(m);
-                        }
-                    } else {
-                        std::fwrite(info.pMappedData, 1, size, f);
+                        std::fclose(f);
+                        scan(size_t(width) * height);
                     }
+                    const std::string sidecar = file + ".max";
+                    if (FILE* m = std::fopen(sidecar.c_str(), "w")) {
+                        std::fprintf(m, "%.4f\n", max_value);
+                        std::fclose(m);
+                    }
+                    // In the log as well: the number is what the peak diagnostics compare, and a
+                    // session's files are not always kept. The nits assume the encode's 2.2
+                    // decode of the game's picture at the paper white set for the run.
+                    const float paper = std::max(BbSettings::Get().hdr_paper_white.load(), 1.0f);
+                    std::printf("Dump: %s max %.4f (%.1f nits at paper white %.0f)\n", file.c_str(),
+                                max_value, std::pow(max_value, 2.2f) * paper, paper);
+                } else if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                    std::fwrite(info.pMappedData, 1, size, f);
                     std::fclose(f);
                 }
                 std::scoped_lock lock{dump_pool_mutex};
@@ -232,7 +272,11 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
                 } else {
                     vmaDestroyBuffer(allocator, buffer, allocation);
                 }
-            });
+            };
+        {
+            std::scoped_lock lock{dump_write_mutex};
+            dump_writes.push_back(std::move(write));
+        }
     }
     const vk::MemoryBarrier2 after{
         .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
@@ -264,6 +308,37 @@ void DumpPresentedFloat16(const Instance& instance, Scheduler& scheduler,
     UpscalerDebug::DumpImages(instance, scheduler, cmdbuf, index,
                               {{image, width, height, 4, name, "rgba16f",
                                 vk::ImageAspectFlagBits::eColor, true}});
+}
+
+} // namespace Vulkan
+
+namespace Vulkan {
+
+// Native+ HDR: the upscaler's input and its output, on hdr_dump's schedule — the peak in each
+// says whether the chain made it and whether the upscale kept it. Peaks only (no converted
+// files): a frame every few seconds for a session's length, without the memory or the hitches.
+void DumpUpscalerPeaksIfDue(const Instance& instance, Scheduler& scheduler,
+                            vk::CommandBuffer cmdbuf, vk::Image input, u32 in_w, u32 in_h,
+                            vk::Image output, u32 out_w, u32 out_h) {
+    constexpr int kFirstS = 8;
+    constexpr int kEveryS = 3;
+    static const int total = std::clamp(int(BbSettings::Get().hdr_dump.load()), 0, 100);
+    static int left = total;
+    static int index = 0;
+    static const auto start = std::chrono::steady_clock::now();
+    if (left <= 0 || !input || !output) {
+        return;
+    }
+    const auto due = start + std::chrono::seconds(kFirstS + kEveryS * (total - left));
+    if (std::chrono::steady_clock::now() < due) {
+        return;
+    }
+    --left;
+    UpscalerDebug::DumpImages(
+        instance, scheduler, cmdbuf, index++,
+        {{input, in_w, in_h, 8, "upscale_in", "rgba16f", vk::ImageAspectFlagBits::eColor, true, true},
+         {output, out_w, out_h, 8, "upscale_out", "rgba16f", vk::ImageAspectFlagBits::eColor, true,
+          true}});
 }
 
 } // namespace Vulkan

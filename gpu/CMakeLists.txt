@@ -155,6 +155,11 @@ add_own_shader(render/shaders/hdr/bb_display_copy.frag bb_display_copy_frag)
 # The HUD's mask (the upscaler's pre-UI snapshot against the finished frame): the present shows
 # the HUD at UI Brightness through it.
 add_own_shader(render/shaders/hdr/hdr_ui_mask.comp hdr_ui_mask_comp)
+# The transfer around the upscaler (hdr/upscale_transfer.glsl): the chain's gamma 2.2 frame to
+# linear BT.2020 for the reconstruction, and back to the game's encoding afterwards.
+add_own_shader(render/shaders/hdr/hdr_upscale_transfer.comp hdr_upscale_transfer_comp)
+add_own_shader(render/shaders/hdr/hdr_upscale_transfer.comp hdr_upscale_transfer_encode_comp
+               BB_TRANSFER_ENCODE=1)
 # Compile check of hdr/renodx.glsl (every function used once; MIT port verified by the source
 # repo's shader-check against RenoDX's own code). Not part of the game.
 add_own_shader(render/shaders/hdr/renodx_check.frag renodx_check_frag)

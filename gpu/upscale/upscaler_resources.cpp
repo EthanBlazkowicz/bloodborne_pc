@@ -6,6 +6,7 @@
 
 #include "upscale/vk_temporal_upscaler.h"
 #include "shim/bb_env.h"
+#include "render/hdr_channel.h"
 #include "render/vk_gpu_profiler.h"
 #include "upscale/motion_history.h"
 #include "upscale/vk_scene_resolution.h"
@@ -39,6 +40,8 @@
 #include "bbgpu/shaders/fsr1_easu_comp.h"
 #include "bbgpu/shaders/fsr4_decode_comp.h"
 #include "bbgpu/shaders/fsr4_encode_comp.h"
+#include "bbgpu/shaders/hdr_upscale_transfer_comp.h"
+#include "bbgpu/shaders/hdr_upscale_transfer_encode_comp.h"
 #include "bbgpu/shaders/fsr4_reactive_comp.h"
 #include "vulkan/shader_module.h"
 #include "upscale/vk_camera_motion.h"
@@ -196,7 +199,9 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
                vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled);
     fsr4_linear_view.reset();
     fsr4_linear_image = VideoCore::HostImage{};
-    if (use_fsr4) {
+    // Native+ (hdr/upscale_transfer.glsl): the upscaler's linear input image for whichever
+    // upscaler runs — FSR 4 has its own transfer, the others get this one.
+    if (use_fsr4 || HdrChannel::Native16Active()) {
         make_image(fsr4_linear_image, fsr4_linear_view, vk::Format::eR16G16B16A16Sfloat,
                    vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled);
     }
@@ -328,6 +333,11 @@ void TemporalUpscaler::CreatePipelines() {
             .setLayoutCount = 1, .pSetLayouts = &*fsr4_decode_desc_layout,
             .pushConstantRangeCount = 1, .pPushConstantRanges = &push}));
         fsr4_decode_pipeline = compute(FSR4_DECODE_COMP, *fsr4_decode_pipeline_layout);
+        // Native+ (hdr/upscale_transfer.glsl): the same layouts, the transfer that keeps what is
+        // above the game's white (fsr4_color.comp clamps to it).
+        hdr_transfer_pipeline = compute(HDR_UPSCALE_TRANSFER_COMP, *fsr4_decode_pipeline_layout);
+        hdr_transfer_encode_pipeline =
+            compute(HDR_UPSCALE_TRANSFER_ENCODE_COMP, *fsr4_encode_pipeline_layout);
     }
     {
         std::array<vk::DescriptorSetLayoutBinding, 3> bindings{};

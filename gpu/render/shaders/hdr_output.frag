@@ -47,6 +47,9 @@ const uint FLAG_UI_MASK = 32u;
 // Native+: the frame is linear already (an sRGB view decoded the game's encoding when it was
 // sampled): the present must not decode it again.
 const uint FLAG_LINEAR_FRAME = 64u;
+// Native+ (hdr_probe 13): the linear the encode is about to multiply by paper white, by how far
+// above the game's white it is. Magenta past 1x, blue past 2x, red past 4x, dim grey below.
+const uint FLAG_PEAK_VIEW = 128u;
 
 // Linear brightness (SDR white = 1) above which the highlights are expanded: high, so large
 // bright areas (fog, sky) stay near paper white and only lamps, fire and sparks reach the peak.
@@ -138,6 +141,21 @@ void main() {
         }
     } else {
         linear = ExpandHighlights(sdr_linear, white);
+    }
+    if ((hdr.flags & FLAG_PEAK_VIEW) != 0u) {
+        // The encoder's own input, by how far above the game's white it is (1.0 here is paper
+        // white: 203 nits, 2.0 is 406, 4.0 is 812). Nothing is highlighted: the frame carries
+        // no above-white and the peak has to be made earlier in the chain.
+        const float m = max(linear.r, max(linear.g, linear.b));
+        vec3 shown = vec3(dot(linear, vec3(0.2126, 0.7152, 0.0722)) * 0.5);
+        if (m > 4.0) {
+            shown = vec3(1.0, 0.0, 0.0);
+        } else if (m > 2.0) {
+            shown = vec3(0.0, 0.0, 1.0);
+        } else if (m > 1.02) {
+            shown = vec3(1.0, 0.0, 1.0);
+        }
+        linear = shown;
     }
     if ((hdr.flags & FLAG_DEBUG) != 0u) {
         // The picture in grey at a third of paper white, the expansion over it from blue (a

@@ -856,6 +856,24 @@ void main() {
 
         }
 
+        // Chain probe 15 (test): this draw's HDR output against the game's white, in the same
+        // colours as the final pass's peak view (grey: the output never goes above white —
+        // magenta past 1.02x, blue past 2x, red past 4x). The delta is written as
+        // (shown - game_out) so that the target ends as `shown`.
+        if (push_data.bb_hdr.z == 15u) {
+            const float m15 = max(max(hdr_out.x, hdr_out.y), hdr_out.z);
+            vec3 shown = vec3(dot(hdr_out, vec3(0.2126, 0.7152, 0.0722)) * 0.5);
+            if (m15 > 4.0) {
+                shown = vec3(1.0, 0.0, 0.0);
+            } else if (m15 > 2.0) {
+                shown = vec3(0.0, 0.0, 1.0);
+            } else if (m15 > 1.02) {
+                shown = vec3(1.0, 0.0, 1.0);
+            }
+            frag_color0 = vec4(shown - game_out, 0.0);
+            return;
+        }
+
         // Chain probe 9 (test): a delta of nothing. If the scene is still swapped with this, the
         // swap comes from the draw's own state (its render pass / attachment view), not from what
         // the shader computes.

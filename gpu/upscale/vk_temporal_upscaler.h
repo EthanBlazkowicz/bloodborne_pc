@@ -58,6 +58,11 @@ void DumpPresented(const Instance& instance, Scheduler& scheduler, vk::CommandBu
 void DumpPresentedFloat16(const Instance& instance, Scheduler& scheduler,
                           vk::CommandBuffer cmdbuf, vk::Image image, u32 width, u32 height,
                           int index, const char* name, vk::Format source_format);
+/// Native+ HDR: the upscaler's input and output on hdr_dump's schedule (their peaks, in the log
+/// and in .max sidecars) — whether the chain made above-white and whether the upscale kept it.
+void DumpUpscalerPeaksIfDue(const Instance& instance, Scheduler& scheduler,
+                            vk::CommandBuffer cmdbuf, vk::Image input, u32 in_w, u32 in_h,
+                            vk::Image output, u32 out_w, u32 out_h);
 void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
                          vk::Image image, u32 width, u32 height, vk::Format format);
 
@@ -411,6 +416,11 @@ private:
     vk::UniqueDescriptorSetLayout fsr4_encode_desc_layout;
     vk::UniquePipelineLayout fsr4_encode_pipeline_layout;
     vk::UniquePipeline fsr4_encode_pipeline;
+    /// Native+ (hdr/upscale_transfer.glsl): the transfer around the upscaler for the upscalers
+    /// that are fed the chain's frame — decode to linear BT.2020 before, encode back after. The
+    /// FSR 4 pipelines above cannot be used: fsr4_color.comp clamps to white.
+    vk::UniquePipeline hdr_transfer_pipeline;
+    vk::UniquePipeline hdr_transfer_encode_pipeline;
     vk::UniqueSampler fsr4_linear_sampler;
     vk::UniqueDescriptorSetLayout fsr4_reactive_desc_layout;
     vk::UniquePipelineLayout fsr4_reactive_pipeline_layout;

@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: Copyright 2026 bbport contributors
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// bbport: the transfer around the upscaler, in place (hdr/upscale_transfer.glsl): the chain's
+// gamma 2.2 frame decoded to linear BT.2020 for the reconstruction, and the reconstruction's
+// result encoded back to the game's gamma 2.2 BT.709. Unlike shaders/fsr4_color.comp this one
+// does not clamp to white: the above-white the chain made has to cross the upscaler.
+// Ported from ports/lantern/nativeplus-engine.patch (hdr_upscale_transfer.comp).
+
+#version 450
+
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "upscale_transfer.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+#ifdef BB_TRANSFER_ENCODE
+// Back to the game's chain: in place, the upscaler's output image.
+layout(binding = 0, rgba16f) uniform image2D target_img;
+#else
+// Into linear light for the reconstruction: the chain's frame -> a 16F image beside it.
+layout(binding = 0) uniform texture2D source_img;
+layout(binding = 1, rgba16f) uniform writeonly image2D target_img;
+#endif
+
+layout(push_constant) uniform Params {
+    uint unused;
+} params;
+
+void main() {
+    const ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, imageSize(target_img)))) {
+        return;
+    }
+#ifdef BB_TRANSFER_ENCODE
+    const vec4 c = imageLoad(target_img, p);
+    imageStore(target_img, p, vec4(bb_upscale_encode(c.rgb), c.a));
+#else
+    const vec4 c = texelFetch(source_img, p, 0);
+    imageStore(target_img, p, vec4(bb_upscale_decode(c.rgb), c.a));
+#endif
+}

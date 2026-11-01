@@ -850,12 +850,96 @@ void TemporalUpscaler::RunScaled() {
             RecordEasu(cmdbuf, color_view, w, h, source_width, source_height, ow, oh);
         } else if (UseDlss()) {
             fsr4_linear_frame = false;
+            // Native+ (hdr/upscale_transfer.glsl): temporal reconstruction works in linear light,
+            // and the chain's frame is gamma 2.2 encoded with values above the game's white. It is
+            // decoded into the linear image for DLSS (its HDR input is linear), and its result
+            // encoded back for the game's chain below.
+            const bool hdr_transfer = HdrChannel::Native16() && fsr4_linear_image &&
+                                      hdr_transfer_pipeline && hdr_transfer_encode_pipeline;
+            if (hdr_transfer) {
+                const vk::ImageMemoryBarrier2 to_write{
+                    .srcStageMask = all, .srcAccessMask = vk::AccessFlagBits2::eNone,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+                    .oldLayout = vk::ImageLayout::eUndefined, .newLayout = vk::ImageLayout::eGeneral,
+                    .image = vk::Image(fsr4_linear_image),
+                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+                const vk::MemoryBarrier2 source_ready{
+                    .srcStageMask = all, .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead};
+                cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &source_ready,
+                                         .imageMemoryBarrierCount = 1,
+                                         .pImageMemoryBarriers = &to_write});
+                const vk::DescriptorImageInfo src{.imageView = color_view,
+                                                  .imageLayout = vk::ImageLayout::eGeneral};
+                const vk::DescriptorImageInfo dst{.imageView = *fsr4_linear_view,
+                                                  .imageLayout = vk::ImageLayout::eGeneral};
+                const std::array<vk::WriteDescriptorSet, 2> writes{{
+                    {.dstBinding = 0, .descriptorCount = 1,
+                     .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &src},
+                    {.dstBinding = 1, .descriptorCount = 1,
+                     .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &dst},
+                }};
+                const u32 unused = 0;
+                cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *hdr_transfer_pipeline);
+                cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
+                                            *fsr4_decode_pipeline_layout, 0, writes);
+                cmdbuf.pushConstants(*fsr4_decode_pipeline_layout,
+                                     vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
+                cmdbuf.dispatch((source_width + 7) / 8, (source_height + 7) / 8, 1);
+                const vk::MemoryBarrier2 decoded{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                    .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+                    .dstStageMask = all,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderRead};
+                cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &decoded});
+            }
+            const vk::Image dlss_color =
+                hdr_transfer ? vk::Image(fsr4_linear_image) : color_image;
+            const vk::ImageView dlss_view = hdr_transfer ? *fsr4_linear_view : color_view;
+            const vk::Format dlss_format =
+                hdr_transfer ? vk::Format::eR16G16B16A16Sfloat : color.info.pixel_format;
             ok4 = RecordDlss(cmdbuf,
-                             {color_image, color_view, color.info.pixel_format,
+                             {dlss_color, dlss_view, dlss_format,
                               vk::ImageAspectFlagBits::eColor, source_width, source_height},
                              {depth_image, depth_view, depth_format, vk::ImageAspectFlagBits::eDepth,
                               source_width, source_height},
-                             w, h, ow, oh, frame_ms, false);
+                             w, h, ow, oh, frame_ms, HdrChannel::Native16());
+            if (ok4 && hdr_transfer) {
+                // Back to the game's chain: the reconstruction's linear result re-encoded to the
+                // gamma 2.2 the display pass and the UI draw in, above the game's white kept.
+                const vk::MemoryBarrier2 upscaled{
+                    .srcStageMask = all, .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead |
+                                     vk::AccessFlagBits2::eShaderStorageWrite};
+                cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &upscaled});
+                const vk::DescriptorImageInfo out{.imageView = *output_view,
+                                                  .imageLayout = vk::ImageLayout::eGeneral};
+                const vk::WriteDescriptorSet write{.dstBinding = 0, .descriptorCount = 1,
+                    .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out};
+                const u32 unused = 0;
+                cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *hdr_transfer_encode_pipeline);
+                cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
+                                            *fsr4_encode_pipeline_layout, 0, write);
+                cmdbuf.pushConstants(*fsr4_encode_pipeline_layout,
+                                     vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
+                cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
+                const vk::MemoryBarrier2 encoded{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                    .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+                    .dstStageMask = all,
+                    .dstAccessMask = vk::AccessFlagBits2::eMemoryRead |
+                                     vk::AccessFlagBits2::eMemoryWrite};
+                cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &encoded});
+                static std::atomic<int> told{0};
+                if (told.fetch_add(1) < 3) {
+                    std::printf("HDR upscaler: the chain's frame goes to DLSS as linear BT.2020 "
+                                "(%ux%u), its result back to gamma 2.2 (%ux%u)\n",
+                                source_width, source_height, ow, oh);
+                }
+            }
         } else {
             // bbport: FSR 4 treats its colour as linear light; this frame is the game's
             // tonemapped, sRGB-encoded one. Decoded first, the output encoded again below.
@@ -1007,6 +1091,15 @@ void TemporalUpscaler::RunScaled() {
             }
         }
         if (ok4) {
+            // Native+ HDR: the peak the upscaler was given and the peak it hands over (a frame
+            // every few seconds, peaks only: upscale/upscaler_debug.cpp).
+            if (HdrChannel::Native16()) {
+                barrier(color_image, vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral, all,
+                        vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+                DumpUpscalerPeaksIfDue(instance, scheduler, cmdbuf, color_image, source_width,
+                                       source_height, vk::Image(output_image), ow, oh);
+            }
             CaptureFrameGenScene(depth_image, depth_format, w, h, ow, oh, frame_ms, frame_reset);
         }
         done_this_frame = true;

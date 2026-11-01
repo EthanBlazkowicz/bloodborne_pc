@@ -271,7 +271,6 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
         image_id = texture_cache.FindImage(desc);
         texture_cache.UpdateImage(image_id);
     }
-
     Frame* frame = GetRenderFrame();
 
     // Native+ HDR: the display pass's masked pre-UI snapshot (the HUD at UI Brightness).
@@ -778,6 +777,22 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     auto& settings = BbSettings::Get();
     const bool scrgb =
         swapchain.GetHdrFormat().colorSpace == vk::ColorSpaceKHR::eExtendedSrgbLinearEXT;
+    // One-shot: what the encode writes into, and through which branch — the peak question needs
+    // it known (an SDR swapchain would clip the chain's values to white here).
+    {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 4) {
+            std::printf("HDR encode: swapchain %s %s, composite %s, extent %ux%u, scRGB %d, "
+                        "native+ %d, hdr_linear %d, source %s\n",
+                        vk::to_string(swapchain.GetHdrFormat().format).c_str(),
+                        vk::to_string(swapchain.GetHdrFormat().colorSpace).c_str(),
+                        vk::to_string(HdrChannel::Native16() ? HdrChannel::Native16Format
+                                                             : swapchain.GetSurfaceFormat().format)
+                            .c_str(),
+                        extent.width, extent.height, scrgb ? 1 : 0, HdrChannel::Native16() ? 1 : 0,
+                        frame && frame->hdr_linear ? 1 : 0, source ? "generated" : "real");
+        }
+    }
     BbGameMenu::Poll();
     const bool overlay_visible = BbOverlay::Visible();
 
@@ -896,6 +911,9 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
                  (overlay ? HdrOutputPass::FlagOverlay : 0u) |
                  (debug ? HdrOutputPass::FlagDebug : 0u) |
                  (native16 ? HdrOutputPass::FlagNative16 : 0u) |
+                 (native16 && settings.hdr_probe.load(std::memory_order_relaxed) == 13
+                      ? HdrOutputPass::FlagPeakView
+                      : 0u) |
                  (native16 && frame && frame->hdr_linear ? HdrOutputPass::FlagLinearFrame : 0u) |
                  (native16 && frame && frame->hdr_snapshot_ui_mask
                       ? HdrOutputPass::FlagUiMask
@@ -1120,6 +1138,10 @@ bool Presenter::PresentImage(Frame* frame, vk::Image source, bool last,
         }
         // hdr_dump (bbport.ini): the same dumps once per run, with no environment needed (runs
         // from the launcher cannot set one). The frame as the display chain made it.
+        // Early and often: the diagnostics this dump exists for (the peak a frame reaches) are
+        // settled by the first seconds in the level, and a short session must produce one.
+        constexpr int kHdrDumpFirstS = 8;
+        constexpr int kHdrDumpEveryS = 3;
         static int hdr_dump_left = -1;
         static int hdr_dump_total = 0;
         static std::chrono::steady_clock::time_point hdr_dump_start{};
@@ -1129,12 +1151,15 @@ bool Presenter::PresentImage(Frame* frame, vk::Image source, bool last,
             hdr_dump_total = hdr_dump_left;
             hdr_dump_start = std::chrono::steady_clock::now();
             if (hdr_dump_left > 0) {
-                std::printf("HDR: dumping %d presented frames, from 60 s in\n", hdr_dump_left);
+                std::printf("HDR: dumping %d presented frames, from %d s in, every %d s\n",
+                            hdr_dump_left, kHdrDumpFirstS, kHdrDumpEveryS);
             }
         }
         if (hdr_dump_left > 0 && left == 0) {
-            // In the session, not on the splash: 25 s, then one frame every 2 s.
-            const auto due = hdr_dump_start + std::chrono::seconds(60 + 2 * (hdr_dump_total - hdr_dump_left));
+            // One frame every kHdrDumpEveryS: a session short enough to end before the splash is
+            // gone still produces one (the .max sidecar is the frame's peak, the number to check).
+            const auto due = hdr_dump_start + std::chrono::seconds(
+                                                  kHdrDumpFirstS + kHdrDumpEveryS * (hdr_dump_total - hdr_dump_left));
             if (std::chrono::steady_clock::now() >= due) {
                 --hdr_dump_left;
                 left = 1;

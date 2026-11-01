@@ -71,6 +71,10 @@ public:
     static constexpr u32 FlagNative16 = 16; ///< Native+: the composite carries the scene's HDR
     static constexpr u32 FlagUiMask = 32;   ///< Native+: the snapshot's alpha is the HUD's mask
     static constexpr u32 FlagLinearFrame = 64; ///< Native+: the frame is linear already (sRGB view)
+    /// Native+ (hdr_probe 13): the encoder's own input by how far above the game's white it is —
+    /// dim grey below it, magenta past 1x, blue past 2x, red past 4x. The one reading of the peak
+    /// that needs no readback: an above-white frame shows it on the screen.
+    static constexpr u32 FlagPeakView = 128;
 
     /// `output_format`: the HDR swapchain's format.
     void Create(vk::Device device, vk::Format output_format);

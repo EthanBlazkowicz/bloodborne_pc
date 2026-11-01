@@ -29,6 +29,9 @@ struct DumpImage {
     const char* format;
     vk::ImageAspectFlagBits aspect = vk::ImageAspectFlagBits::eColor;
     bool float16 = false; ///< RGBA16F: the dump is converted to 8-bit RGBA for viewing
+    /// Only the peak (the .max sidecar and its log line): no converted file, which is what
+    /// costs the memory and the time when the number is all that is wanted.
+    bool max_only = false;
 };
 
 /// Copies `images` into host buffers after the commands recorded so far and writes them to
