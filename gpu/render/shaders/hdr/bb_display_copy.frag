@@ -79,6 +79,7 @@ void main() {
     // takes it as it comes. Converting here would also convert the UI, which the game composites
     // through this same shader.
     vec3 o = vec3(brightness(v.x, 0.0), brightness(v.y, 1.0), brightness(v.z, 2.0));
+    // (the alpha add is wired once the carrier reaches this pass; see the PR comment)
     // Chain probe 17 (test): bands of known above-white (2x and 4x) written as this pass's own
     // output, past the brightness table. The encoder's readout then says whether the table's
     // above-white path is what compresses them, or the upscaler after it.

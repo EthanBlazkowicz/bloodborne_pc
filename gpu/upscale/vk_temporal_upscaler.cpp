@@ -917,13 +917,20 @@ void TemporalUpscaler::RunScaled() {
                 cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &upscaled});
                 const vk::DescriptorImageInfo out{.imageView = *output_view,
                                                   .imageLayout = vk::ImageLayout::eGeneral};
-                const vk::WriteDescriptorSet write{.dstBinding = 0, .descriptorCount = 1,
-                    .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out};
+                const vk::DescriptorImageInfo chain_frame{.imageView = color_view,
+                                                          .imageLayout = vk::ImageLayout::eGeneral};
+                const std::array<vk::WriteDescriptorSet, 2> writes{{
+                    {.dstBinding = 0, .descriptorCount = 1,
+                     .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out},
+                    {.dstBinding = 1, .descriptorCount = 1,
+                     .descriptorType = vk::DescriptorType::eSampledImage,
+                     .pImageInfo = &chain_frame},
+                }};
                 const u32 unused = 0;
                 cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *hdr_transfer_encode_pipeline);
                 cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                            *fsr4_encode_pipeline_layout, 0, write);
-                cmdbuf.pushConstants(*fsr4_encode_pipeline_layout,
+                                            *hdr_transfer_encode_pipeline_layout, 0, writes);
+                cmdbuf.pushConstants(*hdr_transfer_encode_pipeline_layout,
                                      vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
                 cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
                 const vk::MemoryBarrier2 encoded{

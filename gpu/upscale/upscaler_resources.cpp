@@ -336,8 +336,23 @@ void TemporalUpscaler::CreatePipelines() {
         // Native+ (hdr/upscale_transfer.glsl): the same layouts, the transfer that keeps what is
         // above the game's white (fsr4_color.comp clamps to it).
         hdr_transfer_pipeline = compute(HDR_UPSCALE_TRANSFER_COMP, *fsr4_decode_pipeline_layout);
+        // The encode side reads the reconstruction's output in place and the chain's frame (for
+        // the alpha that carries what is above the game's white).
+        const std::array<vk::DescriptorSetLayoutBinding, 2> encode_bindings{{
+            {.binding = 0, .descriptorType = vk::DescriptorType::eStorageImage,
+             .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 1, .descriptorType = vk::DescriptorType::eSampledImage,
+             .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        }};
+        hdr_transfer_encode_desc_layout = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = u32(encode_bindings.size()), .pBindings = encode_bindings.data()}));
+        const vk::PushConstantRange encode_push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(u32)};
+        hdr_transfer_encode_pipeline_layout = Check(device.createPipelineLayoutUnique({
+            .setLayoutCount = 1, .pSetLayouts = &*hdr_transfer_encode_desc_layout,
+            .pushConstantRangeCount = 1, .pPushConstantRanges = &encode_push}));
         hdr_transfer_encode_pipeline =
-            compute(HDR_UPSCALE_TRANSFER_ENCODE_COMP, *fsr4_encode_pipeline_layout);
+            compute(HDR_UPSCALE_TRANSFER_ENCODE_COMP, *hdr_transfer_encode_pipeline_layout);
     }
     {
         std::array<vk::DescriptorSetLayoutBinding, 3> bindings{};
