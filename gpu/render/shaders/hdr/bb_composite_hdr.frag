@@ -866,10 +866,12 @@ bool vanilla_plus = psycho_scene && BB_VANILLA_PLUS;
             // which is 0..1 by nature and survives the chain untouched. The display copy adds it
             // back to the frame in ITS output, which is the float image the encode already carries
             // above white correctly (measured: 4x white reaches the swapchain as 4288 nits).
-            // The brightest channel, so a highlight goes white rather than grey.
+            // The brightest channel, so a highlight goes white rather than grey. The alpha this
+            // rides in is the game's elsewhere (1), so the value is offset: 0.25 is "the chain
+            // wrote here, nothing above white", 0.25..0.75 is the excess at half scale.
             float over = has_hdr ? max(max(hdr_out.r, hdr_out.g), hdr_out.b) - 1.0 : 0.0;
             frag_color0 = vec4((scaled || psycho_scene) ? delta_t : max(delta_t, 0.0),
-                               clamp(over, 0.0, 1.0));
+                               0.25 + 0.5 * clamp(over, 0.0, 1.0));
 
 
         // the HDR image is above the game's white (PsychoV30), or where this draw adds light
@@ -887,7 +889,7 @@ bool vanilla_plus = psycho_scene && BB_VANILLA_PLUS;
             // Nothing to add (below a sixteenth of an 8-bit step, encoded). Written as zeros
             // rather than discarded: the alpha channel carries the excess above white for the
             // display copy, and a discarded pixel keeps the game's own alpha there.
-            frag_color0 = vec4(0.0);
+            frag_color0 = vec4(0.0, 0.0, 0.0, 0.25);
 
         }
 

@@ -890,11 +890,16 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                 }
             }
             if (dynamic_masks) {
-                // The delta goes to the color channels; the game's alpha (its grain) stays.
-                constexpr auto rgb = vk::ColorComponentFlags{vk::ColorComponentFlagBits::eR} |
-                                     vk::ColorComponentFlagBits::eG |
-                                     vk::ColorComponentFlagBits::eB;
-                cmdbuf.setColorWriteMaskEXT(0, rgb);
+                // The delta goes to all four channels: the colour above the game's white cannot
+                // ride in the 8-bit RGB, so it rides in the alpha (0.25 + half the excess, see
+                // hdr/bb_composite_hdr.frag), and this is the draw that has to write it. The
+                // game's own alpha in those pixels is traded for it — it was 1 everywhere, which
+                // is what the display copy reads as "nothing above white".
+                constexpr auto rgba = vk::ColorComponentFlags{vk::ColorComponentFlagBits::eR} |
+                                      vk::ColorComponentFlagBits::eG |
+                                      vk::ColorComponentFlagBits::eB |
+                                      vk::ColorComponentFlagBits::eA;
+                cmdbuf.setColorWriteMaskEXT(0, rgba);
             }
             if (is_indexed) {
                 cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex),

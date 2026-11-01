@@ -81,24 +81,6 @@ vec3 PqEncode(vec3 y) {
     return pow((c1 + c2 * ym) / (1.0 + c3 * ym), vec3(m2));
 }
 
-// The reference's shoulder (hdr_native.comp, RollOff): the share of the range from the game's
-// white to the peak, in stops, that is kept as it is, then a log-space approach to the peak —
-// so a lamp, the moon and the sun keep apart instead of all landing on the ceiling as flat
-// white. Asymptotic: never above `limit`.
-float RollOff(float x, float limit, float rolloff) {
-    if (limit <= 1.0) {
-        return min(x, limit);
-    }
-    const float top = log2(limit);
-    const float start = rolloff * top;
-    const float lx = log2(max(x, 1e-6));
-    if (lx <= start) {
-        return x;
-    }
-    const float room = top - start;
-    return exp2(start + room * (1.0 - exp(-(lx - start) / room)));
-}
-
 // Inverse tone map of the brightest channel (hue and saturation kept): unchanged up to KNEE,
 // then a curve with the same slope there that reaches `white` at SDR white.
 vec3 ExpandHighlights(vec3 rgb, float white) {
@@ -136,19 +118,40 @@ void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec3 game_srgb = texelFetch(game, pixel, 0).rgb;
     const float peak_white = max(hdr.peak / hdr.paper_white, 1.0);
-    // Native+: the light the chain made above the game's white, added to the encoded frame before
-    // the decode, so a highlight several times white arrives several times paper white.
+    // TEMP probe (BB_HDR_DEBUG=1): the composite's code in the alpha — white: the chain's draw
+    // did not cover the pixel (the game's 1), red: has_hdr and above white, blue: has_hdr only,
+    // black: no HDR branch.
+    if ((hdr.flags & FLAG_DEBUG) != 0u && (hdr.flags & FLAG_EXCESS) != 0u) {
+        const float code = texelFetch(excess, pixel, 0).r;
+        vec3 shown = vec3(0.0);
+        if (code > 0.9) {
+            shown = vec3(1.0, 1.0, 1.0);
+        } else if (code > 0.6) {
+            shown = vec3(1.0, 0.0, 0.0);
+        } else if (code > 0.3) {
+            shown = vec3(0.0, 0.0, 1.0);
+        }
+        color = vec4(shown, 1.0);
+        return;
+    }
+    // Native+: the light the chain made above the game's white. The composite keeps the colour
+    // with its brightest channel at white (its 8-bit target cannot hold more) and writes how far
+    // above white the pixel is into the frame's alpha, offset by a quarter so that the game's own
+    // alpha (1, where the chain has nothing to say) is not a value a real excess can take.
     if ((hdr.flags & FLAG_EXCESS) != 0u) {
-        // Only where this frame clipped: the chain's HDR output sits above white across the
-        // mid-tones too (measured: a median of 1.26x), and adding its excess everywhere washed
-        // the picture out. Where the frame is not clipped it already carries the chain's value.
-        const float frame_peak = max(game_srgb.r, max(game_srgb.g, game_srgb.b));
-        const float clipped = smoothstep(0.985, 0.999, frame_peak);
-        // The lift is `boost`'s share of the excess, and the result stops at the peak: without
-        // either the moon and a bright sky ran away (measured: 929 nits on a configured 790) and
-        // the clipped areas became flat white.
-        const float lift = texelFetch(excess, pixel, 0).r * clipped;
-        game_srgb = game_srgb + vec3(lift);
+        const float encoded = texelFetch(excess, pixel, 0).r;
+        const float over = encoded > 0.75 ? 0.0 : max(encoded - 0.25, 0.0) * 2.0;
+        // Above white is where the 8-bit frame has nothing left: below it the frame itself is the
+        // chain's value and the excess means nothing.
+        const float brightest = max(game_srgb.r, max(game_srgb.g, game_srgb.b));
+        const float ramp = smoothstep(0.96, 1.0, brightest);
+        if (over > 0.0 && ramp > 0.0 && brightest > 1e-4) {
+            // Scaling the colour up to the chain's value keeps the hue it gave the pixel. Adding
+            // the excess to all three channels instead (as this did) turned every bright window
+            // white: measured saturation of the frame's brightest band 0.004 against the
+            // reference's 0.105, i.e. no colour left above an encoded 0.7.
+            game_srgb *= exp2(ramp * 2.2 * log2((brightest + over) / brightest));
+        }
     }
     const float white = max(mix(1.0, peak_white, clamp(hdr.boost, 0.0, 1.0)), 1.0);
     vec3 sdr_linear = (hdr.flags & FLAG_LINEAR_FRAME) != 0u
@@ -162,12 +165,12 @@ void main() {
         // greys down to true black, the rest of the range stretched to keep its white.
         linear = sdr_linear;
         if ((hdr.flags & FLAG_EXCESS) != 0u) {
-            // Half of the range from the game's white to the peak stays linear (at 790/203 that
-            // is up to about 1.97x white, 400 nits), the rest is compressed towards the peak.
-            const float rolloff = 0.5;
-            linear = vec3(RollOff(linear.r, peak_white, rolloff),
-                          RollOff(linear.g, peak_white, rolloff),
-                          RollOff(linear.b, peak_white, rolloff));
+            // The chain's tone mapper (hdr/bb_composite_hdr.frag: Vanilla+, rolled off to the
+            // peak) already shaped the highlights, so the light comes back above untouched and
+            // stops at the peak, as the reference does (hdr_output.frag: min(sdr_linear * gain,
+            // peak_white)). Rolling off a second time here compressed the top twice: measured
+            // 648.90 nits on a configured 790, against the reference's 791.01.
+            linear = min(linear, vec3(peak_white));
         }
         if (hdr.black_floor > 0.0) {
             linear = max(linear - vec3(hdr.black_floor), vec3(0.0)) / (1.0 - hdr.black_floor);
