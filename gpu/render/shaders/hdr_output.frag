@@ -117,6 +117,7 @@ vec3 Grade(vec3 c) {
 void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec3 game_srgb = texelFetch(game, pixel, 0).rgb;
+    const float peak_white = max(hdr.peak / hdr.paper_white, 1.0);
     // Native+: the light the chain made above the game's white, added to the encoded frame before
     // the decode, so a highlight several times white arrives several times paper white.
     if ((hdr.flags & FLAG_EXCESS) != 0u) {
@@ -125,10 +126,16 @@ void main() {
         // the picture out. Where the frame is not clipped it already carries the chain's value.
         const float frame_peak = max(game_srgb.r, max(game_srgb.g, game_srgb.b));
         const float clipped = smoothstep(0.985, 0.999, frame_peak);
-        game_srgb = game_srgb + vec3(texelFetch(excess, pixel, 0).r) * clipped;
+        // The lift is `boost`'s share of the excess, and the result stops at the peak: without
+        // either the moon and a bright sky ran away (measured: 929 nits on a configured 790) and
+        // the clipped areas became flat white.
+        const float lift = texelFetch(excess, pixel, 0).r * clipped;
+        // In the frame's own encoding: the peak is paper_white * encoded^2.2, so the ceiling
+        // here is the peak's 2.2nd root (790 nits at 203 paper white is 1.86, not 3.89).
+        const float encoded_peak = pow(peak_white, 1.0 / 2.2);
+        game_srgb = min(game_srgb + vec3(lift), vec3(encoded_peak));
     }
-    float peak_white = max(hdr.peak / hdr.paper_white, 1.0);
-    float white = max(mix(1.0, peak_white, clamp(hdr.boost, 0.0, 1.0)), 1.0);
+    const float white = max(mix(1.0, peak_white, clamp(hdr.boost, 0.0, 1.0)), 1.0);
     vec3 sdr_linear = (hdr.flags & FLAG_LINEAR_FRAME) != 0u
                           ? clamp(game_srgb, 0.0, 1.0)
                           : SdrToLinear(game_srgb);
