@@ -483,6 +483,23 @@ void Rasterizer::BindColorAttachments(RenderState& state, const GraphicsPipeline
             attachment.image_layout = target.layout;
         }
         image->usage.render_target = 1u;
+        // Native+ HDR: which image a chain target really draws into (reduced: the port's 16F
+        // proxy, else the guest's own), and in which format. The delta pass's alpha never reached
+        // the display copy, and this is the fact that decides where it can go.
+        if (cb == 0 && HdrChannel::Native16() &&
+            HdrChannel::ChainTargetAddress(image->info.guest_address)) {
+            static std::mutex told_mutex;
+            static std::unordered_set<u64> told;
+            std::scoped_lock lock{told_mutex};
+            const u64 key = (u64(image->info.guest_address) << 4) | (reduced ? 1u : 0u);
+            if (told.size() < 16 && told.insert(key).second) {
+                std::printf("HDR target: %#llx %s, view over %s, attachment %s\n",
+                            (unsigned long long)image->info.guest_address,
+                            reduced ? "reduced (the port's proxy)" : "native (the guest's image)",
+                            vk::to_string(image->info.pixel_format).c_str(),
+                            attachment.image_view ? "set" : "none");
+            }
+        }
         if (cb == 0 && upscaler->Enabled()) {
             redirect.color = upscaler->RedirectColor(image_id, desc.view_info, redirect.target);
             if (redirect.color) {
