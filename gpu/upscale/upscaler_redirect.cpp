@@ -256,13 +256,10 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
     // in "Failed to allocate a frame image").
     const vk::Format display_format =
         HdrChannel::Native16() ? HdrChannel::Native16Format : image.info.pixel_format;
-    // The output-size UI is not known on frames without one (ui_width/ui_height are 0 there): the
-    // display image takes the guest buffer's size then, or it would be created 0x0.
-    const u32 display_width = ui_width != 0 ? ui_width
-                                             : (output_width != 0 ? output_width : image.info.size.width);
-    const u32 display_height =
-        ui_height != 0 ? ui_height
-                       : (output_height != 0 ? output_height : image.info.size.height);
+    // The displayed image is the output size: the frame is composed up there (the UI pass runs at
+    // that size) and the presenter takes it as it is.
+    const u32 display_width = ui_width != 0 ? ui_width : image.info.size.width;
+    const u32 display_height = ui_height != 0 ? ui_height : image.info.size.height;
     if (!display.image || display.format != display_format ||
         display.width != display_width || display.height != display_height) {
         const auto device = instance.GetDevice();
@@ -313,6 +310,20 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
     target = {Mirror(vk::Image(display.image), display.views,
                      HdrChannel::Native16() ? HdrChannel::Native16Format : view_info.format, {}),
               vk::ImageLayout::eGeneral, display_width, display_height};
+    {
+        // One line per display buffer: which image its draws go into. Compared with the image the
+        // presenter is handed (DisplayOverride): if those differ, the frame the presenter reads
+        // never receives the chain's output (colour right, nothing above white).
+        static std::mutex told_mutex;
+        static std::unordered_set<VAddr> told;
+        std::scoped_lock lock{told_mutex};
+        if (told.size() < 8 && told.insert(address).second) {
+            std::printf("HDR redirect: display %#llx -> image %#llx %ux%u\n",
+                        (unsigned long long)address,
+                        (unsigned long long)(VkImage)vk::Image(display.image), display_width,
+                        display_height);
+        }
+    }
     return true;
 }
 
@@ -451,6 +462,16 @@ bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display) {
         return false;
     }
     display = {vk::Image(it->second.image), it->second.format, it->second.width, it->second.height};
+    {
+        static std::mutex told_mutex;
+        static std::unordered_set<VAddr> told;
+        std::scoped_lock lock{told_mutex};
+        if (told.size() < 8 && told.insert(address).second) {
+            std::printf("HDR present: display %#llx <- image %#llx %ux%u %s\n",
+                        (unsigned long long)address, (unsigned long long)(VkImage)display.image,
+                        display.width, display.height, vk::to_string(display.format).c_str());
+        }
+    }
     if (PresentDumpDue()) {
         DumpPresented(display.image, display.width, display.height, display.format);
     }

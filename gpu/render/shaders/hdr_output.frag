@@ -143,9 +143,12 @@ void main() {
         // The picture in grey at a third of paper white, the expansion over it from blue (a
         // little) to red (the peak); in native+ the values above the game's white are the
         // chain's, shown from blue up the same way.
+        // The frame's own value over the game's white (in native+ sdr_linear is the same frame,
+        // so a ratio of the two is always 1 and showed nothing).
+        const vec3 base = (hdr.flags & FLAG_NATIVE16) != 0u ? vec3(1.0) : sdr_linear;
         float gain = max(linear.r, max(linear.g, linear.b)) /
-                     max(max(sdr_linear.r, max(sdr_linear.g, sdr_linear.b)), 1e-4);
-        vec3 shown = vec3(dot(sdr_linear, vec3(0.2126, 0.7152, 0.0722)) * 0.33);
+                     max(max(base.r, max(base.g, base.b)), 1e-4);
+        vec3 shown = vec3(dot(min(linear, vec3(1.0)), vec3(0.2126, 0.7152, 0.0722)) * 0.33);
         if (gain > 1.001) {
             shown = mix(shown, Heat(log2(gain) / max(log2(peak_white), 0.1)), 0.8);
         }

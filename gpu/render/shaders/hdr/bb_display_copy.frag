@@ -54,10 +54,39 @@ void main() {
     uint h = push_data.scene_size >> 16u;
     vec2 scale = vec2(1920.0 / float(w == 0u ? 1920u : w), 1080.0 / float(h == 0u ? 1080u : h));
     vec4 v = texelFetch(fs_img0, ivec2(floor(gl_FragCoord.xy * scale)), 0);
+    // Chain probe 11 (test): what this pass receives, in grey (0.5 = the game's white, brighter
+    // above it: 0.75 at 2x, 1.0 at 4x and beyond). A logarithmic scale, so it survives the
+    // captures and cannot be confused with the scene's own colours.
+    if (push_data.bb_hdr.z == 11u) {
+        const float m = max(max(v.x, v.y), v.z);
+        frag_color0 = vec4(vec3(0.5 + 0.25 * log2(max(m, 1e-4))), v.w);
+        return;
+    }
+    // Chain probe 10 (test): what this pass receives, false-coloured (black below 0.5, blue to
+    // 1, green to 2, yellow to 4, red above). If the highlights are not green/yellow/red here,
+    // the chain clamped them before the display copy.
+    if (push_data.bb_hdr.z == 10u) {
+        const float m = max(max(v.x, v.y), v.z);
+        vec3 fc = m < 0.5 ? vec3(0.0)
+                  : m < 1.0 ? vec3(0.0, 0.0, 1.0)
+                  : m < 2.0 ? vec3(0.0, 1.0, 0.0)
+                  : m < 4.0 ? vec3(1.0, 1.0, 0.0)
+                            : vec3(1.0, 0.0, 0.0);
+        frag_color0 = vec4(fc, v.w);
+        return;
+    }
     // The chain's order is set by the colour table (bb_color_grading.frag); the display buffer
     // takes it as it comes. Converting here would also convert the UI, which the game composites
     // through this same shader.
-    frag_color0 = vec4(brightness(v.x, 0.0), brightness(v.y, 1.0), brightness(v.z, 2.0), v.w);
+    vec3 o = vec3(brightness(v.x, 0.0), brightness(v.y, 1.0), brightness(v.z, 2.0));
+    // Chain probe 12 (test): this pass's OUTPUT, same log scale (0.5 = white, 0.75 = 2x, 1.0 = 4x).
+    // Grey here and colour at probe 11's input = the write's target clamps.
+    if (push_data.bb_hdr.z == 12u) {
+        const float mo = max(max(o.x, o.y), o.z);
+        frag_color0 = vec4(vec3(0.5 + 0.25 * log2(max(mo, 1e-4))), v.w);
+        return;
+    }
+    frag_color0 = vec4(o, v.w);
     // Chain probe 5 (test): the colour through without the brightness table. A correct scene here
     // and a tinted one otherwise = the table's rows (layers) are not the channel order we read.
     if (push_data.bb_hdr.z == 5u) {

@@ -361,6 +361,19 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
         upscaled && HdrChannel::Native16() ? display.format : view_info.format;
     frame->hdr_linear = frame_source_format == vk::Format::eR8G8B8A8Srgb ||
                         frame_source_format == vk::Format::eB8G8R8A8Srgb;
+    // One-shot: which frame the presenter presents in native+, and which encode branch that
+    // implies (the FLAG_LINEAR_FRAME branch clamps to white - the peak question in one line).
+    {
+        static std::atomic<int> told{0};
+        if (HdrChannel::Native16() && told.fetch_add(1) < 4) {
+            std::printf("HDR present: upscaled %d, frame %ux%u format %s, hdr_linear %d, "
+                        "swapchain %ux%u, source %s\n",
+                        upscaled ? 1 : 0, frame->width, frame->height,
+                        vk::to_string(frame_source_format).c_str(), frame->hdr_linear ? 1 : 0,
+                        swapchain.GetExtent().width, swapchain.GetExtent().height,
+                        source ? "generated" : "real");
+        }
+    }
     // Numbered here, in command order; marked where the commands are recorded.
     const u32 stream = draw_scheduler.CrumbStream();
     const u32 crumb = Breadcrumbs::Enabled()
