@@ -62,6 +62,19 @@ function Note([string]$what) {
 
 $launcher = $null
 $gameProc = $null
+
+$stale = @(Get-Process -Name 'bb-probe','Bloodborne' -ErrorAction SilentlyContinue)
+if ($stale.Count -gt 0) {
+    Note ('stale instance(s) alive: ' + (($stale | ForEach-Object { $_.Id }) -join ',') + ' (a crashed run leaves one holding the GPU)')
+    foreach ($p in $stale) { & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null }
+    Start-Sleep -Seconds 3
+    $stale = @(Get-Process -Name 'bb-probe','Bloodborne' -ErrorAction SilentlyContinue)
+    if ($stale.Count -gt 0) {
+        Note 'a process that cannot be killed is still there: the GPU is held by a dead instance, reboot to clear it'
+        exit 2
+    }
+}
+
 try {
     $launcher = Start-Process -FilePath $exe -WorkingDirectory $DataRoot -PassThru
     $end = (Get-Date).AddSeconds(40)
@@ -149,10 +162,14 @@ try {
         if ($gameProc) {
             $gameProc.Refresh()
             if ($gameProc.MainWindowHandle -ne 0) { $gameProc.CloseMainWindow() | Out-Null }
-            if (-not $gameProc.WaitForExit(8000)) {
-                Stop-Process -Id $gameProc.Id -Force -ErrorAction SilentlyContinue
+            $end = (Get-Date).AddSeconds(10)
+            while (-not $gameProc.HasExited -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 200; $gameProc.Refresh() }
+            if (-not $gameProc.HasExited) {
+                & taskkill.exe /T /F /PID $gameProc.Id 2>&1 | Out-Null
+                Start-Sleep -Seconds 2
             }
-            Note 'game closed'
+            if (-not $gameProc.HasExited) { Note 'the game did not exit: its process is stuck' }
+            else { Note 'game closed' }
         }
         if ($launcher -and -not $launcher.HasExited) {
             $launcher.CloseMainWindow() | Out-Null
