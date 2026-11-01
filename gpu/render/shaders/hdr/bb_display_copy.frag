@@ -78,18 +78,7 @@ void main() {
     // The chain's order is set by the colour table (bb_color_grading.frag); the display buffer
     // takes it as it comes. Converting here would also convert the UI, which the game composites
     // through this same shader.
-    // Chain probe 18 (test): this pass's input alpha as grey — the channel the excess above the
-    // game's white travels in. Black where there is nothing to add, white where the chain's frame
-    // still holds the game's own alpha.
-    if (push_data.bb_hdr.z == 18u) {
-        frag_color0 = vec4(vec3(clamp(v.w, 0.0, 1.0)), 1.0);
-        return;
-    }
     vec3 o = vec3(brightness(v.x, 0.0), brightness(v.y, 1.0), brightness(v.z, 2.0));
-    // Native+: what the composite made above the game's white comes in the frame's alpha (its
-    // target is the guest's 8-bit image, so RGB clamps there). Added here, in this pass's own
-    // output — the float display image the encode carries correctly.
-    o += vec3(clamp(v.w, 0.0, 1.0));
     // Chain probe 17 (test): bands of known above-white (2x and 4x) written as this pass's own
     // output, past the brightness table. The encoder's readout then says whether the table's
     // above-white path is what compresses them, or the upscaler after it.

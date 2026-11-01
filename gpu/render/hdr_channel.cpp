@@ -564,25 +564,6 @@ bool HdrChannel::ChainImage(VAddr address, u32 width, u32 height, vk::Format for
     return Upgraded(address, width, height, format);
 }
 
-namespace {
-std::mutex composite_view_mutex;
-vk::ImageView composite_view{};
-} // namespace
-
-void HdrChannel::NoteCompositeTarget(vk::ImageView view, u32 width, u32 height) {
-    if (!Native16()) {
-        return;
-    }
-    std::scoped_lock lock{composite_view_mutex};
-    composite_view = view;
-    NoteChainSize(width, height);
-}
-
-vk::ImageView HdrChannel::CompositeTargetView() {
-    std::scoped_lock lock{composite_view_mutex};
-    return composite_view;
-}
-
 bool HdrChannel::ChainTargetAddress(VAddr address) {
     if (!Native16Active()) {
         return false;
@@ -593,7 +574,7 @@ bool HdrChannel::ChainTargetAddress(VAddr address) {
 
 u32 HdrChannel::ChainProbe() {
     const int setting = int(BbSettings::Get().hdr_probe.load(std::memory_order_relaxed));
-    if (setting >= 1 && setting <= 18) {
+    if (setting >= 1 && setting <= 17) {
         return u32(setting);
     }
     const char* probe = std::getenv("BB_HDR_PROBE");

@@ -917,25 +917,13 @@ void TemporalUpscaler::RunScaled() {
                 cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &upscaled});
                 const vk::DescriptorImageInfo out{.imageView = *output_view,
                                                   .imageLayout = vk::ImageLayout::eGeneral};
-                // The chain's own frame, whose alpha carries the excess above the game's white
-                // (the reconstruction's alpha is its own); `color_view` when it is not known.
-                const vk::ImageView excess_view = HdrChannel::CompositeTargetView()
-                                                      ? HdrChannel::CompositeTargetView()
-                                                      : color_view;
-                const vk::DescriptorImageInfo chain_frame{.imageView = excess_view,
-                                                          .imageLayout = vk::ImageLayout::eGeneral};
-                const std::array<vk::WriteDescriptorSet, 2> writes{{
-                    {.dstBinding = 0, .descriptorCount = 1,
-                     .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out},
-                    {.dstBinding = 1, .descriptorCount = 1,
-                     .descriptorType = vk::DescriptorType::eSampledImage,
-                     .pImageInfo = &chain_frame},
-                }};
+                const vk::WriteDescriptorSet write{.dstBinding = 0, .descriptorCount = 1,
+                    .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out};
                 const u32 unused = 0;
                 cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *hdr_transfer_encode_pipeline);
                 cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                            *hdr_transfer_encode_pipeline_layout, 0, writes);
-                cmdbuf.pushConstants(*hdr_transfer_encode_pipeline_layout,
+                                            *fsr4_encode_pipeline_layout, 0, write);
+                cmdbuf.pushConstants(*fsr4_encode_pipeline_layout,
                                      vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
                 cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
                 const vk::MemoryBarrier2 encoded{

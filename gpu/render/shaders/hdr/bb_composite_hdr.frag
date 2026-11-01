@@ -939,15 +939,7 @@ frag_color0 = vec4((in_enc - game_out).zyx, 0.0);
 // In the target's order, as the game's own pixel is: the conversion to the game's
 // channel order is the colour table's, once, for the whole frame (bb_color_grading.frag).
 vec3 delta_t = delta.zyx;
-// The target is the guest's 8-bit image (its float proxies are copies without a reader), so
-            // what is above the game's white cannot ride in RGB: it rides in the alpha channel,
-            // which is 0..1 by nature and survives the chain untouched. The display copy adds it
-            // back to the frame in ITS output, which is the float image the encode already carries
-            // above white correctly (measured: 4x white reaches the swapchain as 4288 nits).
-            // The brightest channel, so a highlight goes white rather than grey.
-            float over = has_hdr ? max(max(hdr_out.r, hdr_out.g), hdr_out.b) - 1.0 : 0.0;
-            frag_color0 = vec4((scaled || psycho_scene) ? delta_t : max(delta_t, 0.0),
-                               clamp(over, 0.0, 1.0));
+frag_color0 = vec4((scaled || psycho_scene) ? delta_t : max(delta_t, 0.0), 0.0);
 
         // Chain probe (in-game menu, test; bb_hdr.z set for this draw by bbport): green where
 
@@ -971,15 +963,11 @@ vec3 delta_t = delta.zyx;
 
                    1.0 / 4096.0) {
 
-            // Nothing to add (below a sixteenth of an 8-bit step, encoded).
+            // Nothing to add (below a sixteenth of an 8-bit step, encoded): no blend, so no
 
-            // Nothing to add (below a sixteenth of an 8-bit step, encoded).
+            // read and write of the 16-bit target for this pixel (the shadows, most of a frame).
 
-            // Written as zeros rather than discarded: the alpha channel carries the excess
-            // above white for the display copy, and a discarded pixel keeps the game's own alpha
-            // there — which the display copy would then add to the whole frame (measured: the
-            // picture blew out to an average of 329 nits with a peak of 930).
-            frag_color0 = vec4(0.0);
+            discard;
 
         }
 

@@ -440,10 +440,6 @@ private:
     /// FSR 4 pipelines above cannot be used: fsr4_color.comp clamps to white.
     vk::UniquePipeline hdr_transfer_pipeline;
     vk::UniquePipeline hdr_transfer_encode_pipeline;
-    /// The encode side takes two bindings (the output in place, and the chain's frame for its
-    /// alpha), so it has a layout of its own.
-    vk::UniqueDescriptorSetLayout hdr_transfer_encode_desc_layout;
-    vk::UniquePipelineLayout hdr_transfer_encode_pipeline_layout;
     vk::UniqueSampler fsr4_linear_sampler;
     vk::UniqueDescriptorSetLayout fsr4_reactive_desc_layout;
     vk::UniquePipelineLayout fsr4_reactive_pipeline_layout;

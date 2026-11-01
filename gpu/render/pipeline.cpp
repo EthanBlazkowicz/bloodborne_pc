@@ -617,15 +617,12 @@ GraphicsPipeline::GraphicsPipeline(
                 .srcColorBlendFactor = vk::BlendFactor::eOne,
                 .dstColorBlendFactor = vk::BlendFactor::eOne,
                 .colorBlendOp = vk::BlendOp::eAdd,
-                // Alpha: the excess above the game's white, written as it is
-                // (bb_composite_hdr.frag; the display copy adds it back into its own output).
-                .srcAlphaBlendFactor = vk::BlendFactor::eOne,
-                .dstAlphaBlendFactor = vk::BlendFactor::eZero,
+                .srcAlphaBlendFactor = vk::BlendFactor::eZero,
+                .dstAlphaBlendFactor = vk::BlendFactor::eOne,
                 .alphaBlendOp = vk::BlendOp::eAdd,
                 .colorWriteMask = vk::ColorComponentFlagBits::eR |
                                   vk::ColorComponentFlagBits::eG |
-                                  vk::ColorComponentFlagBits::eB |
-                                  vk::ColorComponentFlagBits::eA,
+                                  vk::ColorComponentFlagBits::eB,
             };
             auto delta_blending = color_blending;
             delta_blending.logicOpEnable = false;
