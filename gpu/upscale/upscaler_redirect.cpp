@@ -281,8 +281,11 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
     const auto& image = texture_cache.GetImage(color);
     const VAddr address = image.info.guest_address;
     // Native+ HDR: a chain target is drawn into a float image of its own (see ChainImageFor)
-    // instead of the guest's 8-bit one, which clamps what the chain carries above white.
-    if (HdrChannel::ChainTargetAddress(address) && bb_env("BB_HDR_CHAIN_IMAGE")) {
+    // instead of the guest's 8-bit one, which clamps what the chain carries above white. The
+    // display buffer is never one of them: it has a redirect of its own below, and taking this
+    // branch for it created a second float image that nothing presented (the frame went grey).
+    if (HdrChannel::ChainTargetAddress(address) && bb_env("BB_HDR_CHAIN_IMAGE") &&
+        !FrameCapture::IsDisplayBuffer(address)) {
         if (!HdrChannel::Native16()) {
             return false;
         }
