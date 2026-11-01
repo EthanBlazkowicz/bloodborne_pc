@@ -31,6 +31,13 @@ function Get-NewLog {
     return $new[0]
 }
 
+function Stop-Tree([int]$processId) {
+    try {
+        Start-Process -FilePath 'taskkill.exe' -ArgumentList '/T', '/F', '/PID', $processId -Wait -NoNewWindow -ErrorAction SilentlyContinue | Out-Null
+    } catch {
+    }
+}
+
 function Send-Keys([string]$keys) {
     try { [System.Windows.Forms.SendKeys]::SendWait($keys); return $true } catch { return $false }
 }
@@ -66,7 +73,7 @@ $gameProc = $null
 $stale = @(Get-Process -Name 'bb-probe','Bloodborne' -ErrorAction SilentlyContinue)
 if ($stale.Count -gt 0) {
     Note ('stale instance(s) alive: ' + (($stale | ForEach-Object { $_.Id }) -join ',') + ' (a crashed run leaves one holding the GPU)')
-    foreach ($p in $stale) { & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null }
+    foreach ($staleProc in $stale) { Stop-Tree $staleProc.Id }
     Start-Sleep -Seconds 3
     $stale = @(Get-Process -Name 'bb-probe','Bloodborne' -ErrorAction SilentlyContinue)
     if ($stale.Count -gt 0) {
@@ -165,7 +172,7 @@ try {
             $end = (Get-Date).AddSeconds(10)
             while (-not $gameProc.HasExited -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 200; $gameProc.Refresh() }
             if (-not $gameProc.HasExited) {
-                & taskkill.exe /T /F /PID $gameProc.Id 2>&1 | Out-Null
+                Stop-Tree $gameProc.Id
                 Start-Sleep -Seconds 2
             }
             if (-not $gameProc.HasExited) { Note 'the game did not exit: its process is stuck' }
