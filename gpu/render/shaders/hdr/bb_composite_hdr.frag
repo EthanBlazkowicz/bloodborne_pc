@@ -733,7 +733,7 @@ void main() {
 
 bool psycho_scene = BB_OUTPUT_DELTA; // never SDR because a live push did not arrive
 
-bool vanilla_plus = psycho_scene && BB_VANILLA_PLUS;
+bool vanilla_plus = psycho_scene; // Native+: this port's tone mapper, unconditionally (below)
 
     bool has_hdr = false;
 
