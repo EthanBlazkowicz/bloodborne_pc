@@ -81,6 +81,24 @@ vec3 PqEncode(vec3 y) {
     return pow((c1 + c2 * ym) / (1.0 + c3 * ym), vec3(m2));
 }
 
+// The reference's shoulder (hdr_native.comp, RollOff): the share of the range from the game's
+// white to the peak, in stops, that is kept as it is, then a log-space approach to the peak —
+// so a lamp, the moon and the sun keep apart instead of all landing on the ceiling as flat
+// white. Asymptotic: never above `limit`.
+float RollOff(float x, float limit, float rolloff) {
+    if (limit <= 1.0) {
+        return min(x, limit);
+    }
+    const float top = log2(limit);
+    const float start = rolloff * top;
+    const float lx = log2(max(x, 1e-6));
+    if (lx <= start) {
+        return x;
+    }
+    const float room = top - start;
+    return exp2(start + room * (1.0 - exp(-(lx - start) / room)));
+}
+
 // Inverse tone map of the brightest channel (hue and saturation kept): unchanged up to KNEE,
 // then a curve with the same slope there that reaches `white` at SDR white.
 vec3 ExpandHighlights(vec3 rgb, float white) {
@@ -130,10 +148,7 @@ void main() {
         // either the moon and a bright sky ran away (measured: 929 nits on a configured 790) and
         // the clipped areas became flat white.
         const float lift = texelFetch(excess, pixel, 0).r * clipped;
-        // In the frame's own encoding: the peak is paper_white * encoded^2.2, so the ceiling
-        // here is the peak's 2.2nd root (790 nits at 203 paper white is 1.86, not 3.89).
-        const float encoded_peak = pow(peak_white, 1.0 / 2.2);
-        game_srgb = min(game_srgb + vec3(lift), vec3(encoded_peak));
+        game_srgb = game_srgb + vec3(lift);
     }
     const float white = max(mix(1.0, peak_white, clamp(hdr.boost, 0.0, 1.0)), 1.0);
     vec3 sdr_linear = (hdr.flags & FLAG_LINEAR_FRAME) != 0u
@@ -146,6 +161,14 @@ void main() {
         // bright as the chain made it). The black floor (the menu's slider, OLED): the darkest
         // greys down to true black, the rest of the range stretched to keep its white.
         linear = sdr_linear;
+        if ((hdr.flags & FLAG_EXCESS) != 0u) {
+            // Half of the range from the game's white to the peak stays linear (at 790/203 that
+            // is up to about 1.97x white, 400 nits), the rest is compressed towards the peak.
+            const float rolloff = 0.5;
+            linear = vec3(RollOff(linear.r, peak_white, rolloff),
+                          RollOff(linear.g, peak_white, rolloff),
+                          RollOff(linear.b, peak_white, rolloff));
+        }
         if (hdr.black_floor > 0.0) {
             linear = max(linear - vec3(hdr.black_floor), vec3(0.0)) / (1.0 - hdr.black_floor);
         }
