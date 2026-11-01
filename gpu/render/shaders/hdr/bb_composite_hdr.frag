@@ -703,7 +703,6 @@ void main() {
 
     // scene: swapping the multiplier with it cancels out (scene.bgr * tint(mult.bgr) is still
 
-    // swapped) --- measured with probe 4, which shows this exact colour on screen.
 
 
 
@@ -776,18 +775,6 @@ bool vanilla_plus = psycho_scene && BB_VANILLA_PLUS;
 
                                    : bb_grade(o, hdr_screen);
 
-    // Chain probe 10 (test): the composite's own input range, false-coloured (black below 0.5,
-    // blue to 1, green to 2, yellow to 4, red above): what the tone curve has to work with.
-    if (push_data.bb_hdr.z == 10u) {
-        const float m = max(max(x.r, x.g), x.b);
-        vec3 fc = m < 0.5 ? vec3(0.0)
-                  : m < 1.0 ? vec3(0.0, 0.0, 1.0)
-                  : m < 2.0 ? vec3(0.0, 1.0, 0.0)
-                  : m < 4.0 ? vec3(1.0, 1.0, 0.0)
-                            : vec3(1.0, 0.0, 0.0);
-        frag_color0 = vec4(fc, 0.0);
-        return;
-    }
 
     if (BB_OUTPUT_DELTA) {
 
@@ -859,92 +846,20 @@ bool vanilla_plus = psycho_scene && BB_VANILLA_PLUS;
 
         }
 
-        // Chain probe 16 (test): two bands of known above-white written into the target (2x and
         // 4x the game's white) between the composite and the encode, so the encoder's peak ladder
-        // (hdr_output.frag, the same hdr_probe 16) reads back whether they survive the chain, and
         // the ReShade readout shows their value.
-        if (push_data.bb_hdr.z == 16u || push_data.bb_hdr.z == 5u) {
-            const float px = gl_FragCoord.x;
-            const float py = gl_FragCoord.y;
-            if (py > 700.0 && py < 1300.0 && px < 1800.0) {
-                const float level = px < 900.0 ? 2.0 : 4.0;
-                frag_color0 = vec4(vec3(level) - game_out, 0.0);
-                return;
-            }
-        }
 
-        // Chain probe 15 (test): this draw's HDR output against the game's white, in the same
-        // colours as the final pass's peak view (grey: the output never goes above white —
-        // magenta past 1.02x, blue past 2x, red past 4x). The delta is written as
-        // (shown - game_out) so that the target ends as `shown`.
-        if (push_data.bb_hdr.z == 15u) {
-            const float m15 = max(max(hdr_out.x, hdr_out.y), hdr_out.z);
-            vec3 shown = vec3(dot(hdr_out, vec3(0.2126, 0.7152, 0.0722)) * 0.5);
-            if (m15 > 4.0) {
-                shown = vec3(1.0, 0.0, 0.0);
-            } else if (m15 > 2.0) {
-                shown = vec3(0.0, 0.0, 1.0);
-            } else if (m15 > 1.02) {
-                shown = vec3(1.0, 0.0, 1.0);
-            }
-frag_color0 = vec4((shown - game_out).zyx, 0.0);
-            return;
-        }
 
-        // Chain probe 9 (test): a delta of nothing. If the scene is still swapped with this, the
-        // swap comes from the draw's own state (its render pass / attachment view), not from what
-        // the shader computes.
-        if (push_data.bb_hdr.z == 9u) {
-            frag_color0 = vec4(0.0);
-            return;
-        }
-        // Chain probe 8 (test): a constant red delta - no game_out, no curve: if the scene turns
-        // BLUE instead of red, the delta's write swaps red and blue.
-        if (push_data.bb_hdr.z == 8u) {
-            frag_color0 = vec4(0.4, 0.0, 0.0, 0.0);
-            return;
-        }
-        // Chain probe 6 (test): the delta itself. The target already holds the game's own colour,
 
         // so writing 0.5 - game_out lands on mid grey where our reconstruction matches it, and
 
         // shows the error (bright, dark, coloured) everywhere else --- amplified 4x.
 
-        if (push_data.bb_hdr.z == 6u) {
-
-frag_color0 = vec4((vec3(0.5) - game_out + 4.0 * delta).zyx, 0.0);
-
-            return;
-
-        }
-
-        // Chain probe 4 (test): the chain's own input colour in place of the scene. Red missing
+ 
 
         // here = the sampled textures are wrong; red present = the maths after them is.
 
-        if (push_data.bb_hdr.z == 4u) {
-
-            vec3 in_enc = BB_GAMMA ? exp2(bb_c(808u) * log2(max(x, 0.0) + BB_EPS))
-
-                                   : clamp(x, 0.0, 1.0);
-
-frag_color0 = vec4((in_enc - game_out).zyx, 0.0);
-
-            return;
-
-        }
-
-        // PsychoV30 (scene) replaces the game's curve, so it may also darken.
-
-// In the target's order, as the game's own pixel is: the conversion to the game's
-// channel order is the colour table's, once, for the whole frame (bb_color_grading.frag).
-// Chain probe 20 (test): the HDR output's brightest channel over 4 — 0.25 in the frame means
-            // the game's white, 0.5 means 2x, 1.0 means 4x. What the excess is calibrated against.
-            if (push_data.bb_hdr.z == 20u) {
-                const float m20 = max(max(hdr_out.r, hdr_out.g), hdr_out.b);
-                frag_color0 = vec4(vec3(clamp(m20 * 0.25, 0.0, 1.0)) - game_out, 0.0);
-                return;
-            }
+ 
             vec3 delta_t = delta.zyx;
 // The target is the guest's 8-bit image (its float proxies are copies without a reader), so
             // what is above the game's white cannot ride in RGB: it rides in the alpha channel,
@@ -956,7 +871,6 @@ frag_color0 = vec4((in_enc - game_out).zyx, 0.0);
             frag_color0 = vec4((scaled || psycho_scene) ? delta_t : max(delta_t, 0.0),
                                clamp(over, 0.0, 1.0));
 
-        // Chain probe (in-game menu, test; bb_hdr.z set for this draw by bbport): green where
 
         // the HDR image is above the game's white (PsychoV30), or where this draw adds light
 
@@ -966,26 +880,13 @@ frag_color0 = vec4((in_enc - game_out).zyx, 0.0);
 
         // keep green (pushing red and blue far below 0 turned it black through them).
 
-        bool hdr_part = psycho_scene ? max(max(hdr_out.x, hdr_out.y), hdr_out.z) > 1.001
-
-                                     : max(max(delta.x, delta.y), delta.z) > 0.01;
-
-        if (push_data.bb_hdr.z == 1u && hdr_part) {
-
-            frag_color0 = vec4(vec3(0.0, 1.0, 0.0) - game_out, 0.0);
-
-        } else if (max(max(abs(frag_color0.x), abs(frag_color0.y)), abs(frag_color0.z)) <
+        if (max(max(abs(frag_color0.x), abs(frag_color0.y)), abs(frag_color0.z)) <
 
                    1.0 / 4096.0) {
 
-            // Nothing to add (below a sixteenth of an 8-bit step, encoded).
-
-            // Nothing to add (below a sixteenth of an 8-bit step, encoded).
-
-            // Written as zeros rather than discarded: the alpha channel carries the excess
-            // above white for the display copy, and a discarded pixel keeps the game's own alpha
-            // there — which the display copy would then add to the whole frame (measured: the
-            // picture blew out to an average of 329 nits with a peak of 930).
+            // Nothing to add (below a sixteenth of an 8-bit step, encoded). Written as zeros
+            // rather than discarded: the alpha channel carries the excess above white for the
+            // display copy, and a discarded pixel keeps the game's own alpha there.
             frag_color0 = vec4(0.0);
 
         }

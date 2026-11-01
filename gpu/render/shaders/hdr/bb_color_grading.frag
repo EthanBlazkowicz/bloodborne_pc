@@ -63,13 +63,6 @@ vec3 grade(vec3 sdr, float strength) {
 void main() {
     vec4 c = textureLod(sampler2D(fs_img0, fs_samp0), BB_UV(fs_in_attr0), 0.0);
 
-    // Chain probe 19 (test): the alpha this pass receives from the composite's target, as grey.
-    // The delta pass writes what is above the game's white there; reading it here (one stage
-    // before probe 18) says whether that write lands at all.
-    if (push_data.bb_hdr.z == 19u) {
-        frag_color0 = vec4(vec3(clamp(c.w, 0.0, 1.0)), 1.0);
-        return;
-    }
     // bb_hdr.w: the strength's bits plus one (0: not set by bbport, the game's grading).
     uint bits = push_data.bb_hdr.w;
     float strength = bits == 0u ? 1.0 : clamp(uintBitsToFloat(bits - 1u), 0.0, 1.0);
@@ -99,12 +92,5 @@ void main() {
     }
     // The game's channel order: its target holds them swapped.
     frag_color0 = vec4(o.zyx, max(c.w, 0.0));
-    // Chain probe (in-game menu, test; bb_hdr.z): 3 magenta where the input is above white,
     // 4 green where this pass draws.
-    uint probe = push_data.bb_hdr.z;
-    if ((probe == 3u && top > 1.001) || probe == 4u) {
-        frag_color0 = probe == 4u ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 1.0, 1.0);
-    } else if (probe == 3u && top > 0.99) {
-        frag_color0 = vec4(0.0, 1.0, 1.0, 1.0); // cyan: at the game's white, not above
-    }
 }
