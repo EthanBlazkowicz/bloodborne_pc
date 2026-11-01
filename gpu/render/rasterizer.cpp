@@ -983,6 +983,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                                target_format);
         // One line per shader the chain knows, at the draw: what it draws into, and whether that
         // target is float this frame (BB_HDR_TRACE=1 also logs the accesses of a traced frame).
+        if (HdrChannel::IsCompositeVariant(ps_info->pgm_hash)) {
+            HdrChannel::NoteCompositeTargetAddress(cb.Address());
+        }
         if (HdrChannel::IsCompositeVariant(ps_info->pgm_hash) ||
             HdrChannel::ChainShaderHash(ps_info->pgm_hash)) {
             static std::mutex told_mutex;

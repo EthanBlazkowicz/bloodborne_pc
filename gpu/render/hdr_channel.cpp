@@ -564,6 +564,38 @@ bool HdrChannel::ChainImage(VAddr address, u32 width, u32 height, vk::Format for
     return Upgraded(address, width, height, format);
 }
 
+namespace {
+std::mutex composite_view_mutex2;
+vk::ImageView composite_target_view{};
+VAddr composite_target_address{};
+} // namespace
+
+void HdrChannel::NoteCompositeTargetAddress(VAddr address) {
+    if (!Native16() || !address) {
+        return;
+    }
+    std::scoped_lock lock{composite_view_mutex2};
+    composite_target_address = address;
+}
+
+VAddr HdrChannel::CompositeTargetAddress() {
+    std::scoped_lock lock{composite_view_mutex2};
+    return composite_target_address;
+}
+
+void HdrChannel::NoteCompositeTargetView(vk::ImageView view) {
+    if (!Native16() || !view) {
+        return;
+    }
+    std::scoped_lock lock{composite_view_mutex2};
+    composite_target_view = view;
+}
+
+vk::ImageView HdrChannel::CompositeTargetView() {
+    std::scoped_lock lock{composite_view_mutex2};
+    return composite_target_view;
+}
+
 bool HdrChannel::ChainTargetAddress(VAddr address) {
     if (!Native16Active()) {
         return false;

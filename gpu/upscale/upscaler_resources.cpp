@@ -338,10 +338,12 @@ void TemporalUpscaler::CreatePipelines() {
         hdr_transfer_pipeline = compute(HDR_UPSCALE_TRANSFER_COMP, *fsr4_decode_pipeline_layout);
         // The encode side reads the reconstruction's output in place and the chain's frame (for
         // the alpha that carries what is above the game's white).
-        const std::array<vk::DescriptorSetLayoutBinding, 2> encode_bindings{{
+        const std::array<vk::DescriptorSetLayoutBinding, 3> encode_bindings{{
             {.binding = 0, .descriptorType = vk::DescriptorType::eStorageImage,
              .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
             {.binding = 1, .descriptorType = vk::DescriptorType::eSampledImage,
+             .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 2, .descriptorType = vk::DescriptorType::eStorageImage,
              .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
         }};
         hdr_transfer_encode_desc_layout = Check(device.createDescriptorSetLayoutUnique({

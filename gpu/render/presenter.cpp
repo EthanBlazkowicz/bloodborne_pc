@@ -902,6 +902,14 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     (void)told_metadata;
     static const bool debug = bb_env("BB_HDR_DEBUG") != nullptr;
     const bool native16 = HdrChannel::Native16();
+    // Native+: what the chain made above the game's white, as the present pass samples it.
+    const vk::ImageView excess_view = rasterizer->GetUpscaler().HdrExcessView();
+    {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 3) {
+            std::printf("HDR excess: %s\n", excess_view ? "the upscaler's image" : "none");
+        }
+    }
     const HdrOutputPass::Settings encode{
         .paper_white = paper_white,
         .peak = peak,
@@ -911,6 +919,12 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
                  (overlay ? HdrOutputPass::FlagOverlay : 0u) |
                  (debug ? HdrOutputPass::FlagDebug : 0u) |
                  (native16 ? HdrOutputPass::FlagNative16 : 0u) |
+                 // Off until the transfer samples the image that really holds the chain's
+                 // excess: through the upscaler's colour image it reads the game's alpha (1.0)
+                 // and the whole frame is lifted. BB_HDR_EXCESS=1 turns it on to measure.
+                 (native16 && excess_view && bb_env("BB_HDR_EXCESS")
+                      ? HdrOutputPass::FlagExcess
+                      : 0u) |
                  (native16 && settings.hdr_probe.load(std::memory_order_relaxed) == 13
                       ? HdrOutputPass::FlagPeakView
                       : 0u) |
@@ -960,6 +974,7 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     hdr_pass.Render(cmdbuf, hdr_game.view, overlay ? hdr_overlay.view : hdr_game.view,
                     frame && frame->hdr_snapshot_view ? *frame->hdr_snapshot_view
                                                       : hdr_game.view,
+                    excess_view ? excess_view : hdr_game.view,
                     swapchain.ImageView(), extent, encode);
     const vk::ImageMemoryBarrier2 to_present{
         .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,

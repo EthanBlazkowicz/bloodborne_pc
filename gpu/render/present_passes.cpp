@@ -177,6 +177,12 @@ void HdrOutputPass::Create(vk::Device device, vk::Format output_format) {
             .descriptorCount = 1,
             .stageFlags = vk::ShaderStageFlagBits::eFragment,
         },
+        vk::DescriptorSetLayoutBinding{
+            .binding = 3,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+        },
     };
     desc_set_layout = Check<"create HDR output set layout">(device.createDescriptorSetLayoutUnique({
         .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
@@ -256,8 +262,8 @@ void HdrOutputPass::Create(vk::Device device, vk::Format output_format) {
 }
 
 void HdrOutputPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView game, vk::ImageView overlay,
-                           vk::ImageView snapshot, vk::ImageView output, vk::Extent2D output_size,
-                           const Settings& settings) {
+                           vk::ImageView snapshot, vk::ImageView excess, vk::ImageView output,
+                           vk::Extent2D output_size, const Settings& settings) {
     const vk::RenderingAttachmentInfo attachment{
         .imageView = output,
         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -280,6 +286,11 @@ void HdrOutputPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView game, vk::Ima
             .imageView = snapshot,
             .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
         },
+        vk::DescriptorImageInfo{
+            .sampler = *sampler,
+            .imageView = excess,
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        },
     };
     const std::array writes{
         vk::WriteDescriptorSet{
@@ -299,6 +310,12 @@ void HdrOutputPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView game, vk::Ima
             .descriptorCount = 1,
             .descriptorType = vk::DescriptorType::eCombinedImageSampler,
             .pImageInfo = &images[2],
+        },
+        vk::WriteDescriptorSet{
+            .dstBinding = 3,
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .pImageInfo = &images[3],
         },
     };
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);

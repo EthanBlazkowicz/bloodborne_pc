@@ -15,6 +15,8 @@ layout(location = 0) out vec4 color;
 layout(binding = 0) uniform sampler2D game;     // the letterboxed SDR frame, swapchain-sized
 layout(binding = 1) uniform sampler2D overlay;  // the menu layer (FLAG_OVERLAY)
 layout(binding = 2) uniform sampler2D snapshot; // the frame before the UI (FLAG_UI_MASK)
+// Native+: what the chain made above the game's white, per output pixel.
+layout(binding = 3) uniform sampler2D excess;
 
 layout(push_constant) uniform Settings {
     float paper_white; // nits of SDR white
@@ -47,6 +49,8 @@ const uint FLAG_UI_MASK = 32u;
 // Native+: the frame is linear already (an sRGB view decoded the game's encoding when it was
 // sampled): the present must not decode it again.
 const uint FLAG_LINEAR_FRAME = 64u;
+// Native+: binding 3 holds the excess above the game's white.
+const uint FLAG_EXCESS = 512u;
 // Native+ (hdr_probe 13): the linear the encode is about to multiply by paper white, by how far
 // above the game's white it is. Magenta past 1x, blue past 2x, red past 4x, dim grey below.
 const uint FLAG_PEAK_VIEW = 128u;
@@ -117,6 +121,18 @@ vec3 Grade(vec3 c) {
 void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec3 game_srgb = texelFetch(game, pixel, 0).rgb;
+    // Native+: the light the chain made above the game's white, added to the encoded frame before
+    // the decode, so a highlight several times white arrives several times paper white.
+    if ((hdr.flags & FLAG_PEAK_LADDER) != 0u && (hdr.flags & FLAG_EXCESS) != 0u) {
+        // Chain probe: the excess this pass samples, as grey (on with hdr_probe 16 and 19 both
+        // being off is not possible; this shows it whenever the ladder is on and the add is).
+        const float e = texelFetch(excess, pixel, 0).r;
+        color = vec4(vec3(clamp(e, 0.0, 1.0)), 1.0);
+        return;
+    }
+    if ((hdr.flags & FLAG_EXCESS) != 0u) {
+        game_srgb = game_srgb + vec3(texelFetch(excess, pixel, 0).r);
+    }
     float peak_white = max(hdr.peak / hdr.paper_white, 1.0);
     float white = max(mix(1.0, peak_white, clamp(hdr.boost, 0.0, 1.0)), 1.0);
     vec3 sdr_linear = (hdr.flags & FLAG_LINEAR_FRAME) != 0u

@@ -79,6 +79,8 @@ public:
     /// encoder's input exceeds 1x, 2x, 4x, 8x and 16x the game's white. A reading of the peak
     /// that survives any screenshot or tonemapping: white/black, not a level.
     static constexpr u32 FlagPeakLadder = 256;
+    /// Native+: binding 3 of the present holds what the chain made above white.
+    static constexpr u32 FlagExcess = 512;
 
     /// `output_format`: the HDR swapchain's format.
     void Create(vk::Device device, vk::Format output_format);
@@ -91,7 +93,7 @@ public:
     /// (both ShaderReadOnlyOptimal, `extent` big) are read texel for texel; `snapshot` (the
     /// masked pre-UI frame) wherever its alpha is the HUD's mask.
     void Render(vk::CommandBuffer cmdbuf, vk::ImageView game, vk::ImageView overlay,
-                vk::ImageView snapshot, vk::ImageView output, vk::Extent2D extent,
+                vk::ImageView snapshot, vk::ImageView excess, vk::ImageView output, vk::Extent2D extent,
                 const Settings& settings);
 
 private:

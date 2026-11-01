@@ -475,6 +475,13 @@ void Rasterizer::BindColorAttachments(RenderState& state, const GraphicsPipeline
             is_clear ? GcnToVk::ColorBufferClearValue(col_buf) : vk::ClearValue{};
         attachment.image_view = *view.image_view;
         attachment.image_layout = image->backing->state.layout;
+        // Native+ HDR: the composite's own target carries the excess above white in its alpha;
+        // the upscaler's transfer samples this view (not its colour image, whose alpha is the
+        // game's).
+        if (cb == 0 && HdrChannel::Native16() &&
+            image->info.guest_address == HdrChannel::CompositeTargetAddress()) {
+            HdrChannel::NoteCompositeTargetView(*view.image_view);
+        }
         attachment.clear_value = clear_value.color.uint32;
         attachment.is_clear = is_clear;
         if (reduced) {

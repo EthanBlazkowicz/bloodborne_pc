@@ -84,6 +84,11 @@ public:
     [[nodiscard]] bool Enabled() const noexcept {
         return enabled;
     }
+    /// Native+: the excess above the game's white, per output pixel (empty until the upscaler
+    /// has run once).
+    [[nodiscard]] vk::ImageView HdrExcessView() const {
+        return hdr_excess_view ? *hdr_excess_view : vk::ImageView{};
+    }
     /// A temporal upscaler accumulates this frame (Active), for passes whose noise it resolves
     /// (VBAO).
     [[nodiscard]] bool Accumulating() const {
@@ -440,6 +445,11 @@ private:
     /// FSR 4 pipelines above cannot be used: fsr4_color.comp clamps to white.
     vk::UniquePipeline hdr_transfer_pipeline;
     vk::UniquePipeline hdr_transfer_encode_pipeline;
+    /// Native+ (hdr_upscale_transfer.comp): what the chain made above the game's white, per
+    /// output pixel, written by the encode transfer. The present samples it: the frame's own
+    /// alpha does not survive the UI and post passes (measured: 1.0 by the display pass).
+    VideoCore::HostImage hdr_excess_image;
+    vk::UniqueImageView hdr_excess_view;
     /// The encode side takes two bindings (the output in place, and the chain's frame for its
     /// alpha), so it has a layout of its own.
     vk::UniqueDescriptorSetLayout hdr_transfer_encode_desc_layout;
