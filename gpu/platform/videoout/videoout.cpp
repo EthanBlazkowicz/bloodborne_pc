@@ -301,10 +301,17 @@ struct DeviceCapabilityInfo {
 
 s32 PS4_SYSV_ABI sceVideoOutGetDeviceCapabilityInfo(s32, DeviceCapabilityInfo* info) {
     // HDR when both the display and the game support it.
-    info->capability =
-        presenter->IsHDRSupported() && Common::ElfInfo::Instance().GetPSFAttributes().support_hdr
-            ? CapabilityBt2020Pq
-            : 0;
+    const bool display_hdr = presenter->IsHDRSupported();
+    const bool game_hdr = Common::ElfInfo::Instance().GetPSFAttributes().support_hdr;
+    info->capability = display_hdr && game_hdr ? CapabilityBt2020Pq : 0;
+    {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 3) {
+            std::printf("HDR guest: capability asked: display HDR %d, support_hdr %d -> %s\n",
+                        int(display_hdr), int(game_hdr),
+                        info->capability ? "HDR offered" : "SDR only");
+        }
+    }
     return BbErr::Ok;
 }
 
@@ -365,6 +372,17 @@ s32 PS4_SYSV_ABI sceVideoOutConfigureOutputMode_(s32 handle, u32 reserved, const
     case ColorimetryBt2020Pq:
         if (Common::ElfInfo::Instance().GetPSFAttributes().support_hdr) {
             port->is_hdr = true;
+        }
+        {
+            // One line: whether the game asked for HDR at all. Everything the HDR chain can
+            // carry depends on it — a game that stays SDR renders into 8-bit targets, and then
+            // there is nothing above white anywhere in the frame.
+            static std::atomic<int> told{0};
+            if (told.fetch_add(1) < 3) {
+                std::printf("HDR guest: BT.2020 PQ requested (support_hdr %d) -> %s\n",
+                            int(Common::ElfInfo::Instance().GetPSFAttributes().support_hdr),
+                            port->is_hdr ? "HDR" : "SDR");
+            }
         }
         return BbErr::Ok;
     default:
