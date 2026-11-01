@@ -167,10 +167,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.hdr_saturation = Clamp(std::isfinite(f) ? f : HdrGradeDefault, HdrGradeMin, HdrGradeMax);
     } else if (key == "hdr_scene_grading") {
         v.hdr_scene_grading = Clamp(std::isfinite(f) ? f : HdrSceneGradingDefault, 0.0f, 100.0f);
-    } else if (key == "hdr_dump") {
-        v.hdr_dump = std::clamp(std::isfinite(f) ? int(f) : 0, 0, 100);
-    } else if (key == "hdr_probe") {
-        v.hdr_probe = std::clamp(std::isfinite(f) ? int(f) : 0, 0, 17);
     } else if (key == "hdr_glow") {
         v.hdr_glow = std::clamp(std::isfinite(f) ? int(f) : 1, 0, 1);
     } else if (key == "hdr_delta") {
@@ -594,8 +590,6 @@ void Save() {
     put("hdr_saturation", fixed(v.hdr_saturation, 2));
     put("hdr_scene_grading", fixed(v.hdr_scene_grading, 0));
     put("hdr_swap", std::to_string(v.hdr_swap.load()));
-    put("hdr_dump", std::to_string(v.hdr_dump.load()));
-    put("hdr_probe", std::to_string(v.hdr_probe.load()));
     put("hdr_nograde", std::to_string(v.hdr_nograde.load()));
     put("hdr_delta", std::to_string(v.hdr_delta.load()));
     put("hdr_glow", std::to_string(v.hdr_glow.load()));
