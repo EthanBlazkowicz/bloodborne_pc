@@ -79,6 +79,10 @@ void main() {
     // takes it as it comes. Converting here would also convert the UI, which the game composites
     // through this same shader.
     vec3 o = vec3(brightness(v.x, 0.0), brightness(v.y, 1.0), brightness(v.z, 2.0));
+    // Native+: what the composite made above the game's white comes in the frame's alpha (its
+    // target is the guest's 8-bit image, so RGB clamps there). Added here, in this pass's own
+    // output — the float display image the encode carries correctly.
+    o += vec3(clamp(v.w, 0.0, 1.0));
     // Chain probe 17 (test): bands of known above-white (2x and 4x) written as this pass's own
     // output, past the brightness table. The encoder's readout then says whether the table's
     // above-white path is what compresses them, or the upscaler after it.

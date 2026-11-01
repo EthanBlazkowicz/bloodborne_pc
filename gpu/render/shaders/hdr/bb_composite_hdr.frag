@@ -939,7 +939,15 @@ frag_color0 = vec4((in_enc - game_out).zyx, 0.0);
 // In the target's order, as the game's own pixel is: the conversion to the game's
 // channel order is the colour table's, once, for the whole frame (bb_color_grading.frag).
 vec3 delta_t = delta.zyx;
-frag_color0 = vec4((scaled || psycho_scene) ? delta_t : max(delta_t, 0.0), 0.0);
+// The target is the guest's 8-bit image (its float proxies are copies without a reader), so
+            // what is above the game's white cannot ride in RGB: it rides in the alpha channel,
+            // which is 0..1 by nature and survives the chain untouched. The display copy adds it
+            // back to the frame in ITS output, which is the float image the encode already carries
+            // above white correctly (measured: 4x white reaches the swapchain as 4288 nits).
+            // The brightest channel, so a highlight goes white rather than grey.
+            float over = has_hdr ? max(max(hdr_out.r, hdr_out.g), hdr_out.b) - 1.0 : 0.0;
+            frag_color0 = vec4((scaled || psycho_scene) ? delta_t : max(delta_t, 0.0),
+                               clamp(over, 0.0, 1.0));
 
         // Chain probe (in-game menu, test; bb_hdr.z set for this draw by bbport): green where
 
