@@ -971,11 +971,15 @@ vec3 delta_t = delta.zyx;
 
                    1.0 / 4096.0) {
 
-            // Nothing to add (below a sixteenth of an 8-bit step, encoded): no blend, so no
+            // Nothing to add (below a sixteenth of an 8-bit step, encoded).
 
-            // read and write of the 16-bit target for this pixel (the shadows, most of a frame).
+            // Nothing to add (below a sixteenth of an 8-bit step, encoded).
 
-            discard;
+            // Written as zeros rather than discarded: the alpha channel carries the excess
+            // above white for the display copy, and a discarded pixel keeps the game's own alpha
+            // there — which the display copy would then add to the whole frame (measured: the
+            // picture blew out to an average of 329 nits with a peak of 930).
+            frag_color0 = vec4(0.0);
 
         }
 

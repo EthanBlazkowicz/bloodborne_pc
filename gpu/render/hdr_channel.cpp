@@ -574,7 +574,7 @@ bool HdrChannel::ChainTargetAddress(VAddr address) {
 
 u32 HdrChannel::ChainProbe() {
     const int setting = int(BbSettings::Get().hdr_probe.load(std::memory_order_relaxed));
-    if (setting >= 1 && setting <= 17) {
+    if (setting >= 1 && setting <= 18) {
         return u32(setting);
     }
     const char* probe = std::getenv("BB_HDR_PROBE");

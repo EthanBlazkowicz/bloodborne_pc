@@ -890,11 +890,15 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                 }
             }
             if (dynamic_masks) {
-                // The delta goes to the color channels; the game's alpha (its grain) stays.
-                constexpr auto rgb = vk::ColorComponentFlags{vk::ColorComponentFlagBits::eR} |
-                                     vk::ColorComponentFlagBits::eG |
-                                     vk::ColorComponentFlagBits::eB;
-                cmdbuf.setColorWriteMaskEXT(0, rgb);
+                // The delta goes to the colour channels, and its alpha carries what the chain
+                // made above the game's white (the display copy adds it back): the game's own
+                // alpha does not stay, or the excess would never be written (measured: the
+                // display copy read 1.0 everywhere and the picture blew out).
+                constexpr auto rgba = vk::ColorComponentFlags{vk::ColorComponentFlagBits::eR} |
+                                      vk::ColorComponentFlagBits::eG |
+                                      vk::ColorComponentFlagBits::eB |
+                                      vk::ColorComponentFlagBits::eA;
+                cmdbuf.setColorWriteMaskEXT(0, rgba);
             }
             if (is_indexed) {
                 cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex),
