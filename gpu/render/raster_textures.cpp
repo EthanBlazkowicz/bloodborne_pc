@@ -459,15 +459,12 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
 
             // bbport: a proxied scene image sampled with normalized coordinates reads the proxy:
             // no resample to the native size (the native image is not touched).
-            // Native+ HDR: a chain image sampled with normalized coordinates must read the 16F
-            // image itself. Its proxy is filled from the guest's data (or remade late), and the
-            // display copy read what is above white through it as exactly white (measured).
             const bool chain_sampled =
                 Vulkan::HdrChannel::Native16Active() &&
                 Vulkan::HdrChannel::ChainImage(image.info.guest_address, image.info.size.width,
                                                image.info.size.height, image.info.pixel_format);
-            if (binding_proxy_ok[binding_index] && !is_storage && !binding.force_general &&
-                !binding.is_target && !chain_sampled &&
+            if ((binding_proxy_ok[binding_index] || chain_sampled) && !is_storage &&
+                !binding.force_general && !binding.is_target &&
                 !(upscaler->Enabled() && upscaler->RedirectsSampled(image_id))) {
                 if (const auto proxy = scene_targets->SampleProxy(image, desc.view_info)) {
                     image.usage.texture = 1u;
@@ -477,7 +474,35 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                                                    desc.view_info.range, true};
                     }
                     ++proxy_samples;
+                    if (chain_sampled) {
+                        static std::mutex told_mutex;
+                        static std::unordered_set<u64> told;
+                        std::scoped_lock lock{told_mutex};
+                        if (told.size() < 16 && told.insert(2 * image.info.guest_address + 1).second) {
+                            std::printf("HDR sample: %#llx read through its proxy\n",
+                                        (unsigned long long)image.info.guest_address);
+                        }
+                    }
                     continue;
+                }
+            }
+
+            // Native+ HDR: which path served a chain image's sample, and in which format — the
+            // display copy's above-white arrived as exactly white, so this is the line that says
+            // which of the two it took.
+            if (chain_sampled) {
+                static std::mutex told_mutex;
+                static std::unordered_set<u64> told;
+                std::scoped_lock lock{told_mutex};
+                if (told.size() < 16 && told.insert(2 * image.info.guest_address).second) {
+                    std::printf("HDR sample: %#llx read natively (proxy allowed %d, target %d, "
+                                "general %d, image %s, %ux%u)\n",
+                                (unsigned long long)image.info.guest_address,
+                                int(binding_proxy_ok[binding_index]), int(binding.is_target),
+                                int(binding.force_general),
+                                vk::to_string(image.backing ? image.backing->image.image_ci.format
+                                                            : vk::Format::eUndefined).c_str(),
+                                image.info.size.width, image.info.size.height);
                 }
             }
             barrier |= TransitSampled(image, desc, binding, is_storage);
