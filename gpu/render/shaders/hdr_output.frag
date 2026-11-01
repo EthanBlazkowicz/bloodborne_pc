@@ -131,7 +131,12 @@ void main() {
         return;
     }
     if ((hdr.flags & FLAG_EXCESS) != 0u) {
-        game_srgb = game_srgb + vec3(texelFetch(excess, pixel, 0).r);
+        // Only where this frame clipped: the chain's HDR output sits above white across the
+        // mid-tones too (measured: a median of 1.26x), and adding its excess everywhere washed
+        // the picture out. Where the frame is not clipped it already carries the chain's value.
+        const float frame_peak = max(game_srgb.r, max(game_srgb.g, game_srgb.b));
+        const float clipped = smoothstep(0.985, 0.999, frame_peak);
+        game_srgb = game_srgb + vec3(texelFetch(excess, pixel, 0).r) * clipped;
     }
     float peak_white = max(hdr.peak / hdr.paper_white, 1.0);
     float white = max(mix(1.0, peak_white, clamp(hdr.boost, 0.0, 1.0)), 1.0);

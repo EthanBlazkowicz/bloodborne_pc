@@ -922,9 +922,7 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
                  // Off until the transfer samples the image that really holds the chain's
                  // excess: through the upscaler's colour image it reads the game's alpha (1.0)
                  // and the whole frame is lifted. BB_HDR_EXCESS=1 turns it on to measure.
-                 (native16 && excess_view && bb_env("BB_HDR_EXCESS")
-                      ? HdrOutputPass::FlagExcess
-                      : 0u) |
+                 (native16 && excess_view ? HdrOutputPass::FlagExcess : 0u) |
                  (native16 && settings.hdr_probe.load(std::memory_order_relaxed) == 13
                       ? HdrOutputPass::FlagPeakView
                       : 0u) |

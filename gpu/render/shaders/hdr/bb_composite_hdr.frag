@@ -938,7 +938,14 @@ frag_color0 = vec4((in_enc - game_out).zyx, 0.0);
 
 // In the target's order, as the game's own pixel is: the conversion to the game's
 // channel order is the colour table's, once, for the whole frame (bb_color_grading.frag).
-vec3 delta_t = delta.zyx;
+// Chain probe 20 (test): the HDR output's brightest channel over 4 — 0.25 in the frame means
+            // the game's white, 0.5 means 2x, 1.0 means 4x. What the excess is calibrated against.
+            if (push_data.bb_hdr.z == 20u) {
+                const float m20 = max(max(hdr_out.r, hdr_out.g), hdr_out.b);
+                frag_color0 = vec4(vec3(clamp(m20 * 0.25, 0.0, 1.0)) - game_out, 0.0);
+                return;
+            }
+            vec3 delta_t = delta.zyx;
 // The target is the guest's 8-bit image (its float proxies are copies without a reader), so
             // what is above the game's white cannot ride in RGB: it rides in the alpha channel,
             // which is 0..1 by nature and survives the chain untouched. The display copy adds it
