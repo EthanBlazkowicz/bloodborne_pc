@@ -917,7 +917,12 @@ void TemporalUpscaler::RunScaled() {
                 cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &upscaled});
                 const vk::DescriptorImageInfo out{.imageView = *output_view,
                                                   .imageLayout = vk::ImageLayout::eGeneral};
-                const vk::DescriptorImageInfo chain_frame{.imageView = color_view,
+                // The chain's own frame, whose alpha carries the excess above the game's white
+                // (the reconstruction's alpha is its own); `color_view` when it is not known.
+                const vk::ImageView excess_view = HdrChannel::CompositeTargetView()
+                                                      ? HdrChannel::CompositeTargetView()
+                                                      : color_view;
+                const vk::DescriptorImageInfo chain_frame{.imageView = excess_view,
                                                           .imageLayout = vk::ImageLayout::eGeneral};
                 const std::array<vk::WriteDescriptorSet, 2> writes{{
                     {.dstBinding = 0, .descriptorCount = 1,

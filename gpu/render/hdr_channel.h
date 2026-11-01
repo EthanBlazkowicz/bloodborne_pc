@@ -58,6 +58,11 @@ public:
     /// Native+: whether a draw marked `address` as one of the chain's targets (it carries what
     /// is above the game's white, so it is replaced in place by an RGBA16F image).
     static bool ChainTargetAddress(VAddr address);
+    /// Native+: the view of the composite's own target (the image whose alpha the delta pass
+    /// writes the excess above white into), noted from the draw that writes it. The upscaler's
+    /// transfer pass reads that alpha, since the reconstruction's own alpha is not the chain's.
+    static void NoteCompositeTarget(vk::ImageView view, u32 width, u32 height);
+    static vk::ImageView CompositeTargetView();
     /// The display buffers (the game's last copy) when the port draws them at output size.
     static void SetDisplayRedirect(bool redirect);
     static bool DisplayUpgraded(VAddr address, vk::Format format);

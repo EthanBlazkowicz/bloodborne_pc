@@ -987,6 +987,12 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                                target_format);
         // One line per shader the chain knows, at the draw: what it draws into, and whether that
         // target is float this frame (BB_HDR_TRACE=1 also logs the accesses of a traced frame).
+        if (HdrChannel::IsCompositeVariant(ps_info->pgm_hash)) {
+            // The image the delta pass above white is written into: the upscaler's transfer pass
+            // reads its alpha (the reconstruction's own alpha is not the chain's).
+            HdrChannel::NoteCompositeTarget(state.color_attachments[0].image_view, cb.Pitch(),
+                                            cb.Height());
+        }
         if (HdrChannel::IsCompositeVariant(ps_info->pgm_hash) ||
             HdrChannel::ChainShaderHash(ps_info->pgm_hash)) {
             static std::mutex told_mutex;
