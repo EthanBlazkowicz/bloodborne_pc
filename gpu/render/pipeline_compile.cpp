@@ -416,9 +416,9 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
         if (Shader::Native::IsComposite(curves)) {
             std::printf("HDR tone curve: composite recognised, %zu channel(s), extending\n",
                         curves.size());
-            // Deferred until the producer side exists: ToneCurveParam reads push constants at
-            // bytes 176..192, and the pipeline layout still declares less, which is undefined
-            // behaviour. Recognition is logged above and is the question being asked here.
+            // The push block carries the parameters at 176 (PushData::ToneCurveIndex /
+            // ToneCurveSpvIndex) and every pipeline declares the whole 192 bytes, so the reads the
+            // extension emits are inside the range (pipeline.cpp: push_size = sizeof(PushData)).
             std::printf("HDR tone curve: extending %08x\n", u32(info.pgm_hash));
             Shader::Native::ExtendToneCurve(ir_program);
             std::printf("HDR tone curve: extended %08x, emitting\n", u32(info.pgm_hash));

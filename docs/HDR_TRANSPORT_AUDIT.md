@@ -42,15 +42,45 @@ which the present samples separately and applies by scaling.
 
 ## Numbers the code predicts
 
-`peak_white = hdr_peak / hdr_paper_white`; the extension's top in the chain's gamma 2.2 domain is
-`peak_white`, and the present decodes once, scales by `top / brightest`, and stops at `peak_white`.
+`peak_white = hdr_peak / hdr_paper_white` is a **linear** ratio; the chain's frame is gamma 2.2
+*encoded*, so the extension's target is `peak_white^(1/2.2)`
+(`HdrChannel::ChainEncodeGamma`). The present decodes once and stops at `peak_white`.
 
 | paper white | peak | dark frame max | bright frame max |
 |---|---|---|---|
-| 203 | 790 | 202.9 nits | 790 nits (`3.8916^2.2 = 19.87` decoded, then `min(..., 3.8916)`) |
-| 80 | 790 | 80 nits | 790 nits (`9.875^2.2 = 152.5`, then `min(..., 9.875)`) |
+| 203 | 790 | 202.9 nits (encoded 1.0) | 790 nits: chain tops at encoded 1.8546, decodes to 3.8916 |
+| 80 | 790 | 80 nits | 790 nits: chain tops at encoded 2.2436, decodes to 9.875 |
 
-A dark frame is untouched because `top == brightest` skips the scale entirely.
+With that target the peak clamp is a no-op at exactly the peak, so the roll-off stays visible over
+its whole range. The earlier form pushed the linear ratio (3.8916) into the encoded domain, where the
+chain then reached 19.874 linear = 4034 nits and the clamp cut the shoulder: because the shoulder
+starts at `peak^0.7` and the clamp bit at `peak^0.4545`, **every** above-white pixel clipped to the
+peak for any peak > 1. A panel maximum of 790 in that form was the clamp's own value and carried no
+evidence about the curve.
+
+A dark frame is untouched: the chain's values are all ≤ 1, so both the lift and the clamp are
+no-ops.
+
+## What the adversarial review changed (2026-11-04)
+
+Three defects, each proved by reading, none visible in a panel number:
+
+1. **Two HDR mechanisms ran together.** The delta pass writes `HDR - SDR` and blends One/One over
+   the composite (`pipeline.cpp`), and it was gated only on native+, not on the extension. With
+   `BB_HDR_SCENE_CURVE=1` the frame was the extended curve *plus* the delta's own estimate, so the
+   above-white was never the game's curve alone. The delta now stands down while the extension is
+   on (`rasterizer.cpp`).
+2. **The peak was in the wrong domain** — the section above.
+3. **The excess was applied as one channel's height to all three**, so a chain pixel of
+   (2.0, 0.5, 0.3) presented as (2.0, 1.0, 0.6) and saturated cores washed towards white. It is now
+   a per-channel max in the encoded domain, and it skips the HUD's pixels (the chain is the scene
+   before the UI drew).
+
+Smaller, also fixed: the HDR10 metadata declared BT.709 primaries on a BT.2020 (ST 2084)
+swapchain; the black floor ran *after* the peak clamp and put the frame above the peak; the port's
+own menu was composed at paper white rather than UI Brightness; seven `BB_HDR_*` names the code
+reads were missing from `bb_env_vars.def` (and the env document had drifted 19 rows, so
+`tests/test_env_vars.py` was failing on this branch).
 
 ## The log lines that confirm each hop
 

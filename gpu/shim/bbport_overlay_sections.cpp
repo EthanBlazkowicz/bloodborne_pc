@@ -836,12 +836,12 @@ void HdrSection(BbSettings::Values& s) {
             ImGui::EndCombo();
         }
         Hint(BbSettings::MenuText(
-            "Native+: the light of the game's scene tone mapped to your display's peak (the "
-            "16-bit chain is being ported; expand runs meanwhile). Expand: the SDR picture's "
-            "brightest parts are stretched towards the peak. Live.",
-            "Native+: свет сцены игры тонмаппится к пику вашего дисплея (16-битная цепочка в "
-            "процессе переноса; пока работает расширенный режим). Расширенный: самые яркие "
-            "части SDR-картинки растягиваются к пику. Применяется сразу."));
+            "Native+: the game's own scene colour carried above its white to your display's peak "
+            "(the tone curve extended above the knee; nothing estimated). Expand: the SDR "
+            "picture's brightest parts are stretched towards the peak. Restart to change.",
+            "Native+: цвет сцены самой игры выводится выше её белого до пика вашего дисплея "
+            "(тон-кривая продлена выше колена; без оценок). Расширенный: самые яркие части "
+            "SDR-картинки растягиваются к пику. Для смены нужен перезапуск."));
     }
     {
         // Paper white: how bright the game's white (and this menu) is; about 203 suits a dim
