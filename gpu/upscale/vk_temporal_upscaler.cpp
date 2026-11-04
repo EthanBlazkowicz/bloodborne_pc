@@ -162,6 +162,9 @@ bool TemporalUpscaler::ReactiveOn() const {
 
 void TemporalUpscaler::OnSceneColor(VideoCore::ImageId color) {
     scene_color = color;
+    // Native+: a frame that is drawn but never presented (its flip is dropped) must not leave the
+    // excess flagged for the next frame's take. Cleared before this frame's encode can set it.
+    hdr_excess_fresh.store(false, std::memory_order_release);
 }
 
 namespace {

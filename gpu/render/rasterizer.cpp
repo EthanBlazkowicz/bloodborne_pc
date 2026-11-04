@@ -844,13 +844,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     // the menu's); the grading sliders' neutrals stand in for the RenoDX grading, which comes
     // with the menu work.
     //
-    // Not drawn when the game's own curve is extended (BB_HDR_SCENE_CURVE=1): that pass is the
-    // HDR source itself, and this one adds `HDR - SDR` on top of what it wrote, so both together
-    // counted the same light twice — the frame was never the extended curve alone, and the panel
-    // number that looked right was the two of them. One mechanism at a time.
-    static const bool scene_curve = Shader::Native::ToneCurveEnabled();
+    // Not drawn for a pipeline whose own curve was extended: that pass is the HDR source itself,
+    // and this one adds `HDR - SDR` on top of what it wrote, so both together counted the same
+    // light twice — the frame was never the extended curve alone, and the panel number that looked
+    // right was the two of them. One mechanism at a time, decided per pipeline: a composite the
+    // extension could not rewrite still gets the delta.
     if (const vk::Pipeline hdr_handle = pipeline->HdrHandle();
-        hdr_handle && !scene_curve &&
+        hdr_handle && !pipeline->UsesToneCurve() &&
         BbSettings::Get().hdr_delta.load(std::memory_order_relaxed) != 0) {
         const auto bits = [](float f) { return std::bit_cast<u32>(f) + 1u; };
         const float paper =

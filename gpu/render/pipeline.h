@@ -226,6 +226,19 @@ public:
         return *hdr_pipeline;
     }
 
+    /// One of the stages had its tone curve extended (shader/native/tone_curve.h): this pipeline
+    /// already writes above the game's white from the game's own curve, so the delta pass — which
+    /// adds `HDR - SDR` on top — must not also run for it. Per pipeline and not per setting: a
+    /// composite the extension could not rewrite keeps the delta.
+    [[nodiscard]] bool UsesToneCurve() const {
+        for (const Shader::Info* info : stages) {
+            if (info && info->uses_tone_curve) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// The vertex input attributes and bindings of the fetch shader's attributes. `sharps`,
     /// when given, are their V#s as the GPU command thread read them (in the draw packet): the
     /// tables they come from may have been rewritten by a later constant engine dump by the

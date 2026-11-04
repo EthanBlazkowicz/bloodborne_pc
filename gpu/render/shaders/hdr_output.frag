@@ -63,15 +63,17 @@ const mat3 BT709_TO_BT2020 = mat3(
     0.3293, 0.9195, 0.0880,
     0.0433, 0.0114, 0.8956);
 
-// The chain's own images (the excess, the HUD's mask) are output sized; this pass draws at the
-// swapchain's extent, into which the frame was letterboxed, so their texels are not 1:1 with ours.
-// The same fit the blit used (presenter.cpp Letterbox): one scale, centred.
-ivec2 ChainTexel(ivec2 pixel, ivec2 chain_size, ivec2 frame_size) {
+// Where this swapchain pixel comes from in an output-sized chain image, and whether it is inside
+// the frame at all. The bars are outside it: the blit left them at the clear, so taking the clamped
+// border texel there painted the letterbox with the chain's edge.
+bool ChainTexel(ivec2 pixel, ivec2 chain_size, ivec2 frame_size, out ivec2 texel) {
     const vec2 c = vec2(max(chain_size, ivec2(1)));
     const vec2 f = vec2(frame_size);
     const float scale = max(min(f.x / c.x, f.y / c.y), 1e-6);
     const vec2 origin = (f - c * scale) * 0.5;
-    return clamp(ivec2(floor((vec2(pixel) - origin) / scale)), ivec2(0), chain_size - 1);
+    const vec2 p = (vec2(pixel) - origin) / scale;
+    texel = clamp(ivec2(floor(p)), ivec2(0), chain_size - 1);
+    return all(greaterThanEqual(p, vec2(0.0))) && all(lessThan(p, c));
 }
 
 // The game's picture is made for SDR displays, which show it with a 2.2 power curve. The
@@ -132,9 +134,14 @@ void main() {
     // TEMP probe (BB_HDR_DEBUG=1): how far the chain's own frame reaches above white — white:
     // nothing, blue: above white somewhere, red: at least half a stop over.
     if ((hdr.flags & FLAG_DEBUG) != 0u && (hdr.flags & FLAG_EXCESS) != 0u) {
-        const vec3 chain = texelFetch(excess, pixel, 0).rgb;
-        const float over = max(chain.r, max(chain.g, chain.b)) - 1.0;
-        vec3 shown = over > 0.5 ? vec3(1.0, 0.0, 0.0) : (over > 0.0 ? vec3(0.0, 0.0, 1.0) : vec3(1.0));
+        ivec2 ep;
+        vec3 shown = vec3(1.0);
+        if (ChainTexel(pixel, textureSize(excess, 0), textureSize(game, 0), ep)) {
+            const vec3 chain = texelFetch(excess, ep, 0).rgb;
+            const float over = max(chain.r, max(chain.g, chain.b)) - 1.0;
+            shown = over > 0.5 ? vec3(1.0, 0.0, 0.0)
+                               : (over > 0.0 ? vec3(0.0, 0.0, 1.0) : vec3(1.0));
+        }
         color = vec4(shown, 1.0);
         return;
     }
@@ -149,17 +156,21 @@ void main() {
     // The max is taken in the encoded domain, before the single 2.2 decode below, which is the
     // same operation on every channel and therefore leaves the colour where the chain put it.
     if ((hdr.flags & FLAG_EXCESS) != 0u) {
-        const ivec2 ep = ChainTexel(pixel, textureSize(excess, 0), textureSize(game, 0));
-        const vec3 chain = texelFetch(excess, ep, 0).rgb;
-        // Not on the HUD's pixels: the chain is the scene before the UI drew, so its value there
-        // would replace the HUD with whatever was behind it.
-        float ui = 0.0;
-        if ((hdr.flags & FLAG_UI_MASK) != 0u) {
-            const ivec2 mp = ChainTexel(pixel, textureSize(snapshot, 0), textureSize(game, 0));
-            ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
-        }
-        if (ui <= 0.0) {
-            game_srgb = max(game_srgb, chain);
+        ivec2 ep;
+        if (ChainTexel(pixel, textureSize(excess, 0), textureSize(game, 0), ep)) {
+            const vec3 chain = texelFetch(excess, ep, 0).rgb;
+            // Not on the HUD's pixels: the chain is the scene before the UI drew, so its value
+            // there would replace the HUD with whatever was behind it.
+            float ui = 0.0;
+            if ((hdr.flags & FLAG_UI_MASK) != 0u) {
+                ivec2 mp;
+                if (ChainTexel(pixel, textureSize(snapshot, 0), textureSize(game, 0), mp)) {
+                    ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
+                }
+            }
+            if (ui <= 0.0) {
+                game_srgb = max(game_srgb, chain);
+            }
         }
     }
     const float white = max(mix(1.0, peak_white, clamp(hdr.boost, 0.0, 1.0)), 1.0);
@@ -191,9 +202,11 @@ void main() {
         // The HUD (the mask in the snapshot's alpha): shown at UI Brightness — its pixels
         // brightened by the HUD's white over the game's — while the scene stays as it is.
         if ((hdr.flags & FLAG_UI_MASK) != 0u) {
-            const ivec2 mp = ChainTexel(pixel, textureSize(snapshot, 0), textureSize(game, 0));
-            const float ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
-            linear = mix(linear, linear * max(hdr.ui_white, 0.0), ui);
+            ivec2 mp;
+            if (ChainTexel(pixel, textureSize(snapshot, 0), textureSize(game, 0), mp)) {
+                const float ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
+                linear = mix(linear, linear * max(hdr.ui_white, 0.0), ui);
+            }
         }
     } else {
         linear = ExpandHighlights(sdr_linear, white);

@@ -961,12 +961,13 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
                                              0.0f, BbSettings::HdrBlackFloorMax) /
                                       std::max(paper_white, 1.0f)
                                 : 0.0f,
-        // Native+: the HUD at UI Brightness (the snapshot's mask), as a factor of paper white.
-        .ui_white = native16 && frame && frame->hdr_snapshot_ui_mask
-                        ? std::clamp(settings.hdr_ui_nits.load(std::memory_order_relaxed),
-                                     BbSettings::HdrUiNitsMin, BbSettings::HdrUiNitsMax) /
-                              std::max(paper_white, 1.0f)
-                        : 1.0f,
+        // Native+: the HUD and the port's own menu at UI Brightness, as a factor of paper white.
+        // From the setting, not from this frame's mask: a frame without a mask (no upscaler, a
+        // menu-only frame) must not drop them to paper white.
+        .ui_white = native16 ? std::clamp(settings.hdr_ui_nits.load(std::memory_order_relaxed),
+                                          BbSettings::HdrUiNitsMin, BbSettings::HdrUiNitsMax) /
+                                   std::max(paper_white, 1.0f)
+                             : 1.0f,
         // Native+: the RenoDX-style user grading (live; neutral at 1).
         .exposure = std::clamp(settings.hdr_exposure.load(std::memory_order_relaxed),
                                BbSettings::HdrGradeMin, BbSettings::HdrGradeMax),
@@ -1153,7 +1154,7 @@ bool Presenter::PresentImage(Frame* frame, vk::Image source, bool last,
         source = frame->interp_image[index];
     }
     if (!blank && last) {
-        DumpFinalFrameIfDue(instance, present_scheduler, frame->image, frame->width,
+        DumpFinalFrameIfDue(instance, present_scheduler, cmdbuf, frame->image, frame->width,
                             frame->height,
                             HdrChannel::Native16() ? HdrChannel::Native16Format
                                                    : swapchain.GetSurfaceFormat().format);
@@ -1186,7 +1187,13 @@ bool Presenter::PresentImage(Frame* frame, vk::Image source, bool last,
                             hdr_dump_left);
             }
         }
-        if (hdr_dump_left > 0 && left == 0 && TakePresentPeakRequest()) {
+        // The trigger used to be TakePresentPeakRequest(), which no longer exists (nothing declared
+        // it: the branch did not compile past this line). What it encoded is still wanted here —
+        // the dumps start when the level renders, not at the first present — and the presenter's
+        // own sign of that is a frame whose source is the chain's display image (PrepareFrame sets
+        // source_width only for those).
+        const bool level_up = frame && frame->source_width != 0;
+        if (hdr_dump_left > 0 && left == 0 && level_up) {
             --hdr_dump_left;
             left = 1;
             if (!bb_env("BB_SEQUENCE_DUMP_COUNT")) index = 0;
@@ -1196,11 +1203,11 @@ bool Presenter::PresentImage(Frame* frame, vk::Image source, bool last,
             const vk::Image dumped = source ? source : frame->image;
             if (HdrChannel::Native16()) {
                 // Native+: the frame is the chain's float image — converted for viewing.
-                DumpPresentedFloat16(instance, present_scheduler, dumped,
+                DumpPresentedFloat16(instance, present_scheduler, cmdbuf, dumped,
                                      frame->width, frame->height, index++,
                                      source ? "interp" : "real", frame->source_format);
             } else {
-                DumpPresented(instance, present_scheduler, dumped,
+                DumpPresented(instance, present_scheduler, cmdbuf, dumped,
                               frame->width, frame->height, swapchain.GetSurfaceFormat().format,
                               index++, source ? "interp" : "real");
             }

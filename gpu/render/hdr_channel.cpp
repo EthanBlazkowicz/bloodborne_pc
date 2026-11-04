@@ -747,7 +747,9 @@ float HdrChannel::Knee() {
     // BB_HDR_KNEE overrides for tests.
     static const float env = [] {
         const char* value = std::getenv("BB_HDR_KNEE");
-        return value && *value ? EnvFloat("BB_HDR_KNEE", 0.6f, 0.3f, 0.95f) : 0.0f;
+        return value && *value
+                   ? EnvFloat("BB_HDR_KNEE", 0.6f, BbSettings::HdrKneeMin, BbSettings::HdrKneeMax)
+                   : 0.0f;
     }();
     if (env > 0.0f) {
         return env;
