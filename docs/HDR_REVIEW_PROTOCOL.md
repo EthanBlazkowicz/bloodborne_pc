@@ -30,7 +30,8 @@ the hunks that belong to it.
 |---|---|---|
 | 1 | `866ba4c`, `368ffdb` | five defects found: delta double-count, peak domain, single-channel colour lift, 709 metadata on a 2020 container, dead probe; plus the `hdr_excess_fresh` lifecycle blocker |
 | 2 | `4dd8537`, `992bb26`, `c50d03d`, `72ad28b` | re-review: all round-1 findings fixed; the branch turned out not to compile at all (a removed function and an older dump API in `presenter.cpp`) |
-| 3 | `25c6806` | dispatched — per-pipeline delta gate, letterbox guard, `ui_white` from the setting, knee range, excess flag reset, dump schedule |
+| 3 | `25c6806` | three more: the extended flag was not persisted, so a warm cache restored the double count; the letterbox test was a float window against the blit's integer rect; the new dump trigger fired from the first native+ frame |
+| 4 | `0aaf39e` | fixes for round 3. **Tone math: closed** — `FrameRect` is bit-identical to `Letterbox` on all ten aspect/size cases tried, no clamp reachable from inside the rect, bars exactly 0 through floor/min/grade/PQ, no interaction with debug or compare. Vulkan and conformance verdicts outstanding. |
 
 ## Building (the compiler half of the loop)
 
