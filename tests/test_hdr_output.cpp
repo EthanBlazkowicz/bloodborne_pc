@@ -683,6 +683,25 @@ int main() {
              pq(decode(0.9f) * paper)});
     }
 
+
+    // scRGB at paper white 160: with peak 1000 the ceiling is 6.25 and nothing binds, so this case
+    // measures the two ratios on their own - the output scale paper/80 (= 2.0 here) and the HUD's
+    // white over paper (203/160), which the menu pixel carries.
+    {
+        HdrPush other_paper = settings(FlagNative16 | FlagScRgb, 0.0f, 0.0f, 1.0f);
+        other_paper.paper_white = 160.0f;
+        run(scrgb_pipeline, out_scrgb, other_paper,
+            {decode(0.3f) * 160.0f / paper, decode(0.5f) * 160.0f / paper, 160.0f / paper,
+             decode(0.7f) * 160.0f / paper, decode(2.0f) * 160.0f / paper,
+             decode(0.5f) * 160.0f / paper, 160.0f / paper, decode(0.9f) * 160.0f / paper});
+    }
+    // The menu's comparison split: the left half as an SDR display would show the frame, a grey
+    // divider 1.5 px either side of the middle, the right half untouched. With W = 8 the divider
+    // covers columns 3..5, so this checks the branch's shape rather than a subtle value.
+    run(hdr10_pipeline, out_hdr10, settings(FlagNative16 | 8u, 0.0f, 0.0f, 1.0f),
+        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(0.5f * paper),
+         pq(0.5f * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.9f) * paper)});
+
     std::printf("HDR output: PASS\n");
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);
     vkDestroyPipeline(vk.device, scrgb_pipeline, nullptr);
