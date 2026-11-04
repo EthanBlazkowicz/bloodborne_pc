@@ -813,13 +813,13 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     BbGameMenu::Poll();
     const bool overlay_visible = BbOverlay::Visible();
 
-    // The frame into the composite, letterboxed; the bars stay at the clear. The geometry is the
-    // source image's (the chain's output), not the frame's own: the frame is the guest's size and
-    // a scratch target for the encode, while the whole picture lives in the source.
-    const vk::Extent2D content =
-        frame && frame->source_width
-            ? vk::Extent2D{frame->source_width, frame->source_height}
-            : vk::Extent2D{frame ? frame->width : 0, frame ? frame->height : 0};
+    // The frame into the composite, letterboxed; the bars stay at the clear.
+    //
+    // The content size must be the size of the image the blit actually reads, which is the FRAME:
+    // the encode pass has already drawn the display image (and the chain's values) into it at the
+    // frame's own size. Using the display image's size here instead made the blit read the frame's
+    // top-left corner and stretch that — the picture arrived in a corner of the screen.
+    const vk::Extent2D content{frame ? frame->width : 0, frame ? frame->height : 0};
     const vk::Rect2D rect = frame ? Letterbox(content, extent) : vk::Rect2D{{0, 0}, {0, 0}};
     const vk::ClearColorValue black{std::array{0.0f, 0.0f, 0.0f, 1.0f}};
     const vk::ImageMemoryBarrier2 to_dst{
