@@ -329,6 +329,9 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
         barrier.newLayout = vk::ImageLayout::eGeneral;
         cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
     });
+    // Native+: no 3D this frame, so no transfer encode — a flag left over from a frame that was
+    // drawn but never flipped must not be taken against this one.
+    hdr_excess_fresh.store(false, std::memory_order_relaxed);
     NoteReset(6); // returning to 3D must not reuse history from before a menu/loading screen
     done_this_frame = ui_phase = true;
     ui_color = color_id;

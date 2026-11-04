@@ -16,13 +16,24 @@ void Info::Serialize(Serialization::Archive& ar) const {
     writer.Write(this, sizeof(InfoPersistent));
     writer.Write(flattened_ud_buf);
     srt_info.Serialize(ar);
+    // The tone curve extension is an IR rewrite, so a cached program's SPIR-V is not the game's,
+    // and the fact that it was extended has to travel with it: rebuilt from a warm cache without
+    // this, the pipeline reported UsesToneCurve() false while running the extended shader, and the
+    // delta pass ran on top of the extension — the double count that gate exists to stop.
+    writer.Write(static_cast<u32>(uses_tone_curve ? 1u : 0u));
 }
 
 bool Info::Deserialize(Serialization::Archive& ar) {
     Serialization::Reader reader{ar};
     reader.Read(this, sizeof(InfoPersistent));
     reader.Read(flattened_ud_buf);
-    return srt_info.Deserialize(ar);
+    if (!srt_info.Deserialize(ar)) {
+        return false;
+    }
+    u32 tone_curve{};
+    reader.Read(tone_curve);
+    uses_tone_curve = tone_curve != 0;
+    return true;
 }
 
 void Gcn::FetchShaderData::Serialize(Serialization::Archive& ar) const {

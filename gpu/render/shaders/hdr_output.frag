@@ -63,17 +63,38 @@ const mat3 BT709_TO_BT2020 = mat3(
     0.3293, 0.9195, 0.0880,
     0.0433, 0.0114, 0.8956);
 
+// presenter.cpp's Letterbox, in integers: the rect the blit put the frame in. The fitted size is
+// truncated and the offset is an integer halving, so a float window would classify one content
+// column as outside the frame and one bar column as inside whenever the fitted size or the bar is
+// odd — a dark line on one edge and a bright one on the other.
+ivec4 FrameRect(ivec2 chain_size, ivec2 frame_size) {
+    const ivec2 c = max(chain_size, ivec2(1));
+    const ivec2 f = max(frame_size, ivec2(1));
+    const float frame_aspect = float(c.x) / float(c.y);
+    const float target_aspect = float(f.x) / float(f.y);
+    ivec2 size = f;
+    if (frame_aspect > target_aspect) {
+        size.y = int(float(f.x) / frame_aspect);
+    } else {
+        size.x = int(float(f.y) * frame_aspect);
+    }
+    return ivec4((f - size) / 2, size);
+}
+
+bool InsideFrame(ivec2 pixel, ivec2 chain_size, ivec2 frame_size) {
+    const ivec4 r = FrameRect(chain_size, frame_size);
+    return all(greaterThanEqual(pixel, r.xy)) && all(lessThan(pixel, r.xy + r.zw));
+}
+
 // Where this swapchain pixel comes from in an output-sized chain image, and whether it is inside
 // the frame at all. The bars are outside it: the blit left them at the clear, so taking the clamped
 // border texel there painted the letterbox with the chain's edge.
 bool ChainTexel(ivec2 pixel, ivec2 chain_size, ivec2 frame_size, out ivec2 texel) {
+    const ivec4 r = FrameRect(chain_size, frame_size);
     const vec2 c = vec2(max(chain_size, ivec2(1)));
-    const vec2 f = vec2(frame_size);
-    const float scale = max(min(f.x / c.x, f.y / c.y), 1e-6);
-    const vec2 origin = (f - c * scale) * 0.5;
-    const vec2 p = (vec2(pixel) - origin) / scale;
+    const vec2 p = (vec2(pixel) - vec2(r.xy)) * c / vec2(max(r.zw, ivec2(1)));
     texel = clamp(ivec2(floor(p)), ivec2(0), chain_size - 1);
-    return all(greaterThanEqual(p, vec2(0.0))) && all(lessThan(p, c));
+    return all(greaterThanEqual(pixel, r.xy)) && all(lessThan(pixel, r.xy + r.zw));
 }
 
 // The game's picture is made for SDR displays, which show it with a 2.2 power curve. The
@@ -207,6 +228,13 @@ void main() {
                 const float ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
                 linear = mix(linear, linear * max(hdr.ui_white, 0.0), ui);
             }
+        }
+        // The bars are outside the frame and stay black whatever the grade or the black floor does
+        // to black (the grade's contrast below 1 lifts 0 by 0.18*(1-k), 18 nits at 0.5). The port's
+        // menu is composited further down, so it can still draw over them.
+        if ((hdr.flags & FLAG_EXCESS) != 0u &&
+            !InsideFrame(pixel, textureSize(excess, 0), textureSize(game, 0))) {
+            linear = vec3(0.0);
         }
     } else {
         linear = ExpandHighlights(sdr_linear, white);

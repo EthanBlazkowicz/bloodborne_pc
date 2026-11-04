@@ -374,6 +374,9 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
         upscaled && HdrChannel::Native16() ? display.format : view_info.format;
     frame->hdr_linear = frame_source_format == vk::Format::eR8G8B8A8Srgb ||
                         frame_source_format == vk::Format::eB8G8R8A8Srgb;
+    // The format the frame was encoded from: the frame dump reads the image as this. It was
+    // declared and never written, so the dump took eUndefined (it ignores the argument today).
+    frame->source_format = frame_source_format;
     // One-shot: which frame the presenter presents in native+, and which encode branch that
     // implies (the FLAG_LINEAR_FRAME branch clamps to white - the peak question in one line).
     {
@@ -1189,10 +1192,13 @@ bool Presenter::PresentImage(Frame* frame, vk::Image source, bool last,
         }
         // The trigger used to be TakePresentPeakRequest(), which no longer exists (nothing declared
         // it: the branch did not compile past this line). What it encoded is still wanted here —
-        // the dumps start when the level renders, not at the first present — and the presenter's
-        // own sign of that is a frame whose source is the chain's display image (PrepareFrame sets
-        // source_width only for those).
-        const bool level_up = frame && frame->source_width != 0;
+        // the dumps start when the level renders, not at the first present. native+ derives that
+        // from this frame's excess (set only when the transfer encode ran; source_width alone is
+        // true from the first frame, because the display redirect is on for the whole session);
+        // expand has no chain, so it keeps the display-image test.
+        const bool level_up =
+            frame && (HdrChannel::Native16() ? frame->hdr_excess != vk::ImageView{}
+                                             : frame->source_width != 0);
         if (hdr_dump_left > 0 && left == 0 && level_up) {
             --hdr_dump_left;
             left = 1;
