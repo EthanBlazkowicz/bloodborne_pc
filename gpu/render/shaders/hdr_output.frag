@@ -63,6 +63,17 @@ const mat3 BT709_TO_BT2020 = mat3(
     0.3293, 0.9195, 0.0880,
     0.0433, 0.0114, 0.8956);
 
+// The chain's own images (the excess, the HUD's mask) are output sized; this pass draws at the
+// swapchain's extent, into which the frame was letterboxed, so their texels are not 1:1 with ours.
+// The same fit the blit used (presenter.cpp Letterbox): one scale, centred.
+ivec2 ChainTexel(ivec2 pixel, ivec2 chain_size, ivec2 frame_size) {
+    const vec2 c = vec2(max(chain_size, ivec2(1)));
+    const vec2 f = vec2(frame_size);
+    const float scale = max(min(f.x / c.x, f.y / c.y), 1e-6);
+    const vec2 origin = (f - c * scale) * 0.5;
+    return clamp(ivec2(floor((vec2(pixel) - origin) / scale)), ivec2(0), chain_size - 1);
+}
+
 // The game's picture is made for SDR displays, which show it with a 2.2 power curve. The
 // piecewise sRGB curve (what Windows uses for SDR content in HDR) lifts the shadows: dark
 // scenes turn grey and foggy. Bloodborne is mostly shadows, so 2.2 it is.
@@ -138,13 +149,14 @@ void main() {
     // The max is taken in the encoded domain, before the single 2.2 decode below, which is the
     // same operation on every channel and therefore leaves the colour where the chain put it.
     if ((hdr.flags & FLAG_EXCESS) != 0u) {
-        const vec3 chain = texelFetch(excess, pixel, 0).rgb;
+        const ivec2 ep = ChainTexel(pixel, textureSize(excess, 0), textureSize(game, 0));
+        const vec3 chain = texelFetch(excess, ep, 0).rgb;
         // Not on the HUD's pixels: the chain is the scene before the UI drew, so its value there
         // would replace the HUD with whatever was behind it.
         float ui = 0.0;
         if ((hdr.flags & FLAG_UI_MASK) != 0u) {
-            ui = clamp(texture(snapshot, gl_FragCoord.xy / vec2(textureSize(snapshot, 0))).a,
-                       0.0, 1.0);
+            const ivec2 mp = ChainTexel(pixel, textureSize(snapshot, 0), textureSize(game, 0));
+            ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
         }
         if (ui <= 0.0) {
             game_srgb = max(game_srgb, chain);
@@ -179,8 +191,8 @@ void main() {
         // The HUD (the mask in the snapshot's alpha): shown at UI Brightness — its pixels
         // brightened by the HUD's white over the game's — while the scene stays as it is.
         if ((hdr.flags & FLAG_UI_MASK) != 0u) {
-            float ui = texture(snapshot, gl_FragCoord.xy / vec2(textureSize(snapshot, 0))).a;
-            ui = clamp(ui, 0.0, 1.0);
+            const ivec2 mp = ChainTexel(pixel, textureSize(snapshot, 0), textureSize(game, 0));
+            const float ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
             linear = mix(linear, linear * max(hdr.ui_white, 0.0), ui);
         }
     } else {

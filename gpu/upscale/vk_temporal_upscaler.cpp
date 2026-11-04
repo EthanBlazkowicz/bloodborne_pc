@@ -391,8 +391,8 @@ bool TemporalUpscaler::OnFrameStart() {
     ui_read_barrier = false;
     done_this_frame = false;
     smaa_done = false;
-    // Native+: last frame's excess is not this frame's; the transfer encode sets it again.
-    hdr_excess_fresh = false;
+    // hdr_excess_fresh is deliberately NOT cleared here: this runs at the display pass, which is
+    // after the frame's encode and before its present. The presenter takes the flag instead.
     ldr_target = {};
     scene_color = {};
     snapshot_taken = false;
@@ -838,7 +838,7 @@ void TemporalUpscaler::RecordHdrExcessEncode(vk::CommandBuffer cmdbuf, u32 ow, u
     };
     cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_read});
     hdr_excess_read_layout = true;
-    hdr_excess_fresh = true;
+    hdr_excess_fresh.store(true, std::memory_order_release);
     static std::atomic<int> told{0};
     if (told.fetch_add(1) < 3) {
         std::printf("HDR excess: %ux%u RGBA16F from the %s result (gamma 2.2 %s)\n", ow, oh,
@@ -1065,6 +1065,13 @@ void TemporalUpscaler::RunScaled() {
                 }
             }
             if (ok4 && hdr_transfer) {
+                // Native+: the peak the reconstruction handed over, before the encode below clamps
+                // it to white in place (measured after, every upscaler would look like it clamps).
+                barrier(color_image, vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral, all,
+                        vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+                DumpUpscalerPeaksIfDue(instance, scheduler, cmdbuf, color_image, source_width,
+                                       source_height, vk::Image(output_image), ow, oh);
                 // Native+: the excess above the game's white (hdr_upscale_transfer.comp). The same
                 // pass clamps the reconstruction's result to white in place, which is what the
                 // game's later passes and the display copy read.
@@ -1177,6 +1184,18 @@ void TemporalUpscaler::RunScaled() {
             }
         }
         if (ok4) {
+            // Native+ HDR: the peak the upscaler was given and the peak it hands over (a frame
+            // every few seconds, peaks only: upscale/upscaler_debug.cpp). Before the transfer
+            // encode and the sharpen, because that encode clamps the result to white in place —
+            // measured after it, every upscaler would look like it clamps. DLSS's branch already
+            // did this before its own encode.
+            if (HdrChannel::Native16() && !excess_encoded) {
+                barrier(color_image, vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral, all,
+                        vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+                DumpUpscalerPeaksIfDue(instance, scheduler, cmdbuf, color_image, source_width,
+                                       source_height, vk::Image(output_image), ow, oh);
+            }
             if (BbSettings::Get().upscaler != BbSettings::UpscalerTaa) {
                 ExtraSharpen(vk::Image(output_image), false, ow, oh);
             }
@@ -1235,15 +1254,6 @@ void TemporalUpscaler::RunScaled() {
             }
         }
         if (ok4) {
-            // Native+ HDR: the peak the upscaler was given and the peak it hands over (a frame
-            // every few seconds, peaks only: upscale/upscaler_debug.cpp).
-            if (HdrChannel::Native16()) {
-                barrier(color_image, vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral, all,
-                        vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
-                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
-                DumpUpscalerPeaksIfDue(instance, scheduler, cmdbuf, color_image, source_width,
-                                       source_height, vk::Image(output_image), ow, oh);
-            }
             CaptureFrameGenScene(depth_image, depth_format, w, h, ow, oh, frame_ms, frame_reset);
         }
         done_this_frame = true;

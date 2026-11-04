@@ -72,6 +72,11 @@ struct Frame {
     VideoCore::HostImage hdr_snapshot{};
     vk::UniqueImageView hdr_snapshot_view{};
     bool hdr_snapshot_ui_mask = false;
+    /// Native+ HDR: the upscaler's excess image (what the chain made above the game's white) for
+    /// this frame, taken at PrepareFrame — the one point that knows the frame's draws are done.
+    /// Empty when this frame's transfer did not run: the image is single-buffered, so an old view
+    /// would lift the frame by another frame's light.
+    vk::ImageView hdr_excess{};
     /// Native+ HDR: the frame image holds LINEAR values (an sRGB view decoded the game's
     /// encoding when it was sampled), so the present must not decode them again.
     bool hdr_linear = false;

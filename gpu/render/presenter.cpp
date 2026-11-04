@@ -285,6 +285,13 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
         upscaler.TakeHdrSnapshot(cpu_address, frame->hdr_snapshot, frame->hdr_snapshot_view,
                                  frame->hdr_snapshot_ui_mask);
     }
+    // Native+ HDR: this frame's above-white, taken once here (the frame's draws are done). Taken
+    // even when the frame was not upscaled — the flag is consumed either way, so a stale one can
+    // never lift a later frame.
+    frame->hdr_excess = upscaler.TakeHdrExcessView();
+    if (!upscaled) {
+        frame->hdr_excess = vk::ImageView{};
+    }
 
     // Recorded like draws, on the recording threads: CommandBuffer() would first wait for them
     // to record everything handed over before and then submit from this thread.
@@ -914,8 +921,9 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     (void)told_metadata;
     static const bool debug = bb_env("BB_HDR_DEBUG") != nullptr;
     const bool native16 = HdrChannel::Native16();
-    // Native+: what the chain made above the game's white, as the present pass samples it.
-    const vk::ImageView excess_view = rasterizer->GetUpscaler().HdrExcessView();
+    // Native+: what the chain made above the game's white, as the present pass samples it — this
+    // frame's own, captured at PrepareFrame (see Frame::hdr_excess).
+    const vk::ImageView excess_view = frame ? frame->hdr_excess : vk::ImageView{};
     {
         static std::atomic<int> told{0};
         if (told.fetch_add(1) < 3) {

@@ -107,11 +107,17 @@ void TemporalUpscaler::EnsureUiResources(u32 w, u32 h, vk::Format color, vk::For
         }
         // Native+ HDR: what the chain's frame reaches above the game's white, per output pixel.
         // Output-sized like the UI image and remade with it — the present samples it, so a resize
-        // must never leave it at another size. Every upscaler's transfer writes it (before this it
-        // existed only on DLSS's branch, so TAA and FSR 4 could never lift the frame at all).
-        hdr_excess_image.Destroy();
-        hdr_excess_view.reset();
+        // must never leave it at another size.
+        //
+        // Retired, not destroyed: the previous frame's present can still sample the old view, and
+        // the Finish() above waits for the draw queue, not the present queue. The pair retired one
+        // recreation ago is what gets freed, so at most two of them exist.
+        hdr_retired_excess_image.Destroy();
+        hdr_retired_excess_view.reset();
+        hdr_retired_excess_image = std::move(hdr_excess_image);
+        hdr_retired_excess_view = std::move(hdr_excess_view);
         hdr_excess_read_layout = false;
+        hdr_excess_fresh.store(false, std::memory_order_relaxed);
         hdr_excess_width = hdr_excess_height = 0;
         if (HdrChannel::Native16()) {
             hdr_excess_image = VideoCore::HostImage(device, allocator);

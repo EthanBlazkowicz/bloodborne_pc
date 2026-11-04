@@ -13,6 +13,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include "shim/bb_env.h"
 #include <chrono>
 #include <functional>
@@ -84,11 +85,20 @@ public:
     [[nodiscard]] bool Enabled() const noexcept {
         return enabled;
     }
-    /// Native+: the excess above the game's white, per output pixel (empty until the upscaler
-    /// has run once, and empty on a frame whose transfer did not run — the image would still hold
-    /// the frame before it, and lifting this one by it would be wrong).
-    [[nodiscard]] vk::ImageView HdrExcessView() const {
-        return hdr_excess_view && hdr_excess_fresh ? *hdr_excess_view : vk::ImageView{};
+    /// Native+: the excess above the game's white, per output pixel, for the frame that has just
+    /// finished — empty when that frame's transfer did not run (the image would still hold the
+    /// frame before it, and lifting this one by it would be wrong).
+    ///
+    /// It is *taken*, not read: the encode sets the flag while the frame's draws are recorded, and
+    /// the presenter asks for it once, at PrepareFrame, when the frame's commands are complete.
+    /// Clearing it anywhere earlier is wrong — `OnFrameStart` runs at the display pass, which is
+    /// after the encode and before the present, so a plain "is it fresh" read there would be false
+    /// on every frame and the above-white would never be presented.
+    [[nodiscard]] vk::ImageView TakeHdrExcessView() {
+        if (!hdr_excess_view || !hdr_excess_fresh.exchange(false, std::memory_order_acq_rel)) {
+            return vk::ImageView{};
+        }
+        return *hdr_excess_view;
     }
     /// A temporal upscaler accumulates this frame (Active), for passes whose noise it resolves
     /// (VBAO).
@@ -456,8 +466,13 @@ private:
     /// The present samples it in ShaderReadOnlyOptimal, the encode writes it as storage: the
     /// layout alternates every frame, so the first write starts from Undefined.
     bool hdr_excess_read_layout = false;
-    /// The excess image holds this frame's result (the transfer encode ran).
-    bool hdr_excess_fresh = false;
+    /// The excess image holds the finished frame's result (the transfer encode ran). Written by the
+    /// recording thread inside the frame, taken by the presenter at PrepareFrame.
+    std::atomic<bool> hdr_excess_fresh{false};
+    /// A retired excess image: freed one recreation later, because the previous frame's present may
+    /// still sample it and the draw scheduler's Finish() does not wait for the present queue.
+    VideoCore::HostImage hdr_retired_excess_image;
+    vk::UniqueImageView hdr_retired_excess_view;
     /// The excess image exists at the output size.
     [[nodiscard]] bool EnsureHdrExcess(u32 ow, u32 oh) const {
         return hdr_excess_view && hdr_excess_width == ow && hdr_excess_height == oh;
