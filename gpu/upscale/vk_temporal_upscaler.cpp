@@ -391,6 +391,8 @@ bool TemporalUpscaler::OnFrameStart() {
     ui_read_barrier = false;
     done_this_frame = false;
     smaa_done = false;
+    // Native+: last frame's excess is not this frame's; the transfer encode sets it again.
+    hdr_excess_fresh = false;
     ldr_target = {};
     scene_color = {};
     snapshot_taken = false;
@@ -753,6 +755,98 @@ bool TemporalUpscaler::Scaled() const {
            BbSettings::IsSpatial(BbSettings::Get().upscaler);
 }
 
+/// Native+ (hdr/hdr_upscale_transfer.comp): the second half of the transfer, run for whatever
+/// wrote the reconstruction's result. What the chain made above the game's white goes, unclamped,
+/// into the excess image the present samples; the result itself is clamped to white in place,
+/// because the game's later passes and the display copy read that one. `already_encoded`: the
+/// result is in the chain's own gamma 2.2 (TAA, FSR 1 and FSR 4 are handed the game's frame) rather
+/// than linear light (DLSS is handed the decoded frame and has to be encoded back).
+void TemporalUpscaler::RecordHdrExcessEncode(vk::CommandBuffer cmdbuf, u32 ow, u32 oh,
+                                             bool already_encoded) {
+    if (!hdr_transfer_encode_pipeline || !EnsureHdrExcess(ow, oh)) {
+        return;
+    }
+    const auto all = vk::PipelineStageFlagBits2::eAllCommands;
+    const auto compute = vk::PipelineStageFlagBits2::eComputeShader;
+    const vk::MemoryBarrier2 ready{
+        .srcStageMask = all,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = compute,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead |
+                         vk::AccessFlagBits2::eShaderStorageWrite,
+    };
+    // Last frame's present read it: back to the layout imageStore needs (the first write starts
+    // from the image's creation layout).
+    const vk::ImageMemoryBarrier2 to_write{
+        .srcStageMask = all,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderRead,
+        .dstStageMask = compute,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .oldLayout = hdr_excess_read_layout ? vk::ImageLayout::eShaderReadOnlyOptimal
+                                            : vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eGeneral,
+        .image = vk::Image(hdr_excess_image),
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1,
+                             .pMemoryBarriers = &ready,
+                             .imageMemoryBarrierCount = 1,
+                             .pImageMemoryBarriers = &to_write});
+    const vk::DescriptorImageInfo out{.imageView = *output_view,
+                                      .imageLayout = vk::ImageLayout::eGeneral};
+    // Binding 1 is not read by the shader since the chain's frame travels whole: bound to the
+    // composite's view as before, so the descriptor set keeps its shape.
+    const vk::ImageView chain = HdrChannel::CompositeTargetView()
+                                    ? HdrChannel::CompositeTargetView()
+                                    : *output_view;
+    const vk::DescriptorImageInfo chain_frame{.imageView = chain,
+                                              .imageLayout = vk::ImageLayout::eGeneral};
+    const vk::DescriptorImageInfo excess_out{.imageView = *hdr_excess_view,
+                                             .imageLayout = vk::ImageLayout::eGeneral};
+    const std::array<vk::WriteDescriptorSet, 3> writes{{
+        {.dstBinding = 0, .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out},
+        {.dstBinding = 1, .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &chain_frame},
+        {.dstBinding = 2, .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &excess_out},
+    }};
+    const u32 encoded = already_encoded ? 1u : 0u;
+    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *hdr_transfer_encode_pipeline);
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
+                                *hdr_transfer_encode_pipeline_layout, 0, writes);
+    cmdbuf.pushConstants(*hdr_transfer_encode_pipeline_layout, vk::ShaderStageFlagBits::eCompute,
+                         0, sizeof(encoded), &encoded);
+    cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
+    const vk::MemoryBarrier2 done{
+        .srcStageMask = compute,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask = all,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &done});
+    // The present samples it: the layout its descriptor declares.
+    const vk::ImageMemoryBarrier2 to_read{
+        .srcStageMask = compute,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask = all,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+        .oldLayout = vk::ImageLayout::eGeneral,
+        .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        .image = vk::Image(hdr_excess_image),
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    };
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_read});
+    hdr_excess_read_layout = true;
+    hdr_excess_fresh = true;
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 3) {
+        std::printf("HDR excess: %ux%u RGBA16F from the %s result (gamma 2.2 %s)\n", ow, oh,
+                    already_encoded ? "upscaler's" : "reconstruction's",
+                    already_encoded ? "kept" : "applied");
+    }
+}
+
 void TemporalUpscaler::RunScaled() {
     if (auto* profiler = GpuProfiler::Get()) {
         // The chosen upscaler (FSR 4 runs FSR 3.1 until its model is built, a few seconds).
@@ -786,9 +880,14 @@ void TemporalUpscaler::RunScaled() {
     vk::Image depth_image = depth.GetImage(), color_image = color.GetImage();
     vk::ImageView depth_view{}, color_view{};
     u32 source_width = iw, source_height = ih;
+    // P1 diagnostic: the format the reconstruction actually samples. A view over the chain's
+    // float image created with the guest's 8-bit format reads UNORM and clamps at white, which is
+    // the symptom this port kept measuring; this line says which one is in use.
+    vk::Format upscaler_input_format = color.info.pixel_format;
     if (ProxiesOn()) {
         VideoCore::ImageViewInfo ci, di;
         ci.format = color.info.pixel_format;
+        upscaler_input_format = ci.format;
         di.format = depth_format;
         const auto cp = scene_targets.Read(ldr_target, ci);
         const auto dp = scene_targets.Read(camera_motion.Depth(), di);
@@ -809,11 +908,24 @@ void TemporalUpscaler::RunScaled() {
                                 HdrChannel::Native16() ? HdrChannel::Native16Format
                                                        : color.info.pixel_format,
                                 vk::ImageAspectFlagBits::eColor);
+        upscaler_input_format = HdrChannel::Native16() ? HdrChannel::Native16Format
+                                                       : color.info.pixel_format;
         runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                         vk::AccessFlagBits2::eShaderRead);
         runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                         vk::AccessFlagBits2::eShaderRead);
         runtime.FlushBarriers();
+    }
+    {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 4) {
+            std::printf("HDR upscaler input: upscaler %d, proxies %d, view %s over scene %s, "
+                        "%ux%u -> %ux%u\n",
+                        int(BbSettings::Get().upscaler), int(ProxiesOn()),
+                        vk::to_string(upscaler_input_format).c_str(),
+                        vk::to_string(color.info.pixel_format).c_str(), source_width,
+                        source_height, ow, oh);
+        }
     }
 
     scheduler.EndRendering();
@@ -872,6 +984,10 @@ void TemporalUpscaler::RunScaled() {
                 vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
                 vk::ImageLayout::eGeneral, all, rw);
         bool ok4 = true;
+        // Native+: whether the transfer encode already split this frame's result into the excess
+        // image (DLSS, which is handed linear light and needs it). TAA and FSR 4 hand back the
+        // chain's own encoding, so theirs is split below, after the sharpen.
+        bool excess_encoded = false;
         if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
             RecordTaa(cmdbuf, color_view, depth_view);
         } else if (spatial) {
@@ -949,84 +1065,11 @@ void TemporalUpscaler::RunScaled() {
                 }
             }
             if (ok4 && hdr_transfer) {
-                // Native+: the excess above the game's white, per output pixel, written here and
-                // sampled by the present. Created here rather than with the other resources: those
-                // are made before native+ is established, so it never existed.
-                if (!hdr_excess_view) {
-                    hdr_excess_image = VideoCore::HostImage(instance.GetDevice(),
-                                                            instance.GetAllocator());
-                    hdr_excess_image.Create(vk::ImageCreateInfo{
-                        .imageType = vk::ImageType::e2D,
-                        .format = vk::Format::eR16G16B16A16Sfloat,
-                        .extent = {ow, oh, 1},
-                        .mipLevels = 1,
-                        .arrayLayers = 1,
-                        .samples = vk::SampleCountFlagBits::e1,
-                        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
-                    });
-                    hdr_excess_view = Check(instance.GetDevice().createImageViewUnique({
-                        .image = vk::Image(hdr_excess_image),
-                        .viewType = vk::ImageViewType::e2D,
-                        .format = vk::Format::eR16G16B16A16Sfloat,
-                        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                    }));
-                    std::printf("HDR excess: %ux%u RGBA16F, written by the upscaler\n", ow, oh);
-                }
-                // Back to the game's chain: the reconstruction's linear result re-encoded to the
-                // gamma 2.2 the display pass and the UI draw in, above the game's white kept.
-                const vk::MemoryBarrier2 upscaled{
-                    .srcStageMask = all, .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
-                    .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-                    .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead |
-                                     vk::AccessFlagBits2::eShaderStorageWrite};
-                cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &upscaled});
-                const vk::DescriptorImageInfo out{.imageView = *output_view,
-                                                  .imageLayout = vk::ImageLayout::eGeneral};
-                const vk::ImageView excess_source = HdrChannel::CompositeTargetView()
-                                                       ? HdrChannel::CompositeTargetView()
-                                                       : color_view;
-                {
-                    static std::atomic<int> told_source{0};
-                    if (told_source.fetch_add(1) < 4) {
-                        std::printf("HDR excess source: composite view %p, colour view %p, using %p\n",
-                                    (void*)HdrChannel::CompositeTargetView(), (void*)(VkImageView)color_view,
-                                    (void*)(VkImageView)excess_source);
-                    }
-                }
-                const vk::DescriptorImageInfo chain_frame{.imageView = excess_source,
-                                                          .imageLayout = vk::ImageLayout::eGeneral};
-                const vk::DescriptorImageInfo excess_out{.imageView = *hdr_excess_view,
-                                                         .imageLayout = vk::ImageLayout::eGeneral};
-                const std::array<vk::WriteDescriptorSet, 3> writes{{
-                    {.dstBinding = 0, .descriptorCount = 1,
-                     .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out},
-                    {.dstBinding = 1, .descriptorCount = 1,
-                     .descriptorType = vk::DescriptorType::eSampledImage,
-                     .pImageInfo = &chain_frame},
-                    {.dstBinding = 2, .descriptorCount = 1,
-                     .descriptorType = vk::DescriptorType::eStorageImage,
-                     .pImageInfo = &excess_out},
-                }};
-                const u32 unused = 0;
-                cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *hdr_transfer_encode_pipeline);
-                cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                            *hdr_transfer_encode_pipeline_layout, 0, writes);
-                cmdbuf.pushConstants(*hdr_transfer_encode_pipeline_layout,
-                                     vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
-                cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
-                const vk::MemoryBarrier2 encoded{
-                    .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-                    .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-                    .dstStageMask = all,
-                    .dstAccessMask = vk::AccessFlagBits2::eMemoryRead |
-                                     vk::AccessFlagBits2::eMemoryWrite};
-                cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &encoded});
-                // The present samples it: to the layout its descriptor declares.
-                barrier(vk::Image(hdr_excess_image), vk::ImageAspectFlagBits::eColor,
-                        vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                        vk::AccessFlagBits2::eShaderStorageWrite,
-                        vk::ImageLayout::eShaderReadOnlyOptimal, all,
-                        vk::AccessFlagBits2::eShaderRead);
+                // Native+: the excess above the game's white (hdr_upscale_transfer.comp). The same
+                // pass clamps the reconstruction's result to white in place, which is what the
+                // game's later passes and the display copy read.
+                RecordHdrExcessEncode(cmdbuf, ow, oh, /*already_encoded=*/false);
+                excess_encoded = true;
                 static std::atomic<int> told{0};
                 if (told.fetch_add(1) < 3) {
                     std::printf("HDR upscaler: the chain's frame goes to DLSS as linear BT.2020 "
@@ -1136,6 +1179,13 @@ void TemporalUpscaler::RunScaled() {
         if (ok4) {
             if (BbSettings::Get().upscaler != BbSettings::UpscalerTaa) {
                 ExtraSharpen(vk::Image(output_image), false, ow, oh);
+            }
+            // Native+: the same split DLSS gets inside its branch. TAA, FSR 1 and FSR 4 are handed
+            // the chain's own frame (no decode), so the result is already in the game's gamma 2.2
+            // and only the clamp and the copy happen. Until this, the excess image existed only on
+            // DLSS's branch: TAA presented paper white whatever the curve made.
+            if (HdrChannel::Native16() && !excess_encoded) {
+                RecordHdrExcessEncode(cmdbuf, ow, oh, /*already_encoded=*/true);
             }
             barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                     vk::ImageLayout::eGeneral, all, rw, vk::ImageLayout::eGeneral,

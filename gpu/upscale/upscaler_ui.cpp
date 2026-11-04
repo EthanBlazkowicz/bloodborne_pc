@@ -105,6 +105,35 @@ void TemporalUpscaler::EnsureUiResources(u32 w, u32 h, vk::Format color, vk::For
                 .format = color, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
             }));
         }
+        // Native+ HDR: what the chain's frame reaches above the game's white, per output pixel.
+        // Output-sized like the UI image and remade with it — the present samples it, so a resize
+        // must never leave it at another size. Every upscaler's transfer writes it (before this it
+        // existed only on DLSS's branch, so TAA and FSR 4 could never lift the frame at all).
+        hdr_excess_image.Destroy();
+        hdr_excess_view.reset();
+        hdr_excess_read_layout = false;
+        hdr_excess_width = hdr_excess_height = 0;
+        if (HdrChannel::Native16()) {
+            hdr_excess_image = VideoCore::HostImage(device, allocator);
+            hdr_excess_image.Create(vk::ImageCreateInfo{
+                .imageType = vk::ImageType::e2D,
+                .format = vk::Format::eR16G16B16A16Sfloat,
+                .extent = {w, h, 1},
+                .mipLevels = 1, .arrayLayers = 1, .samples = vk::SampleCountFlagBits::e1,
+                .tiling = vk::ImageTiling::eOptimal,
+                .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+                .initialLayout = vk::ImageLayout::eUndefined,
+            });
+            hdr_excess_view = Check(device.createImageViewUnique({
+                .image = vk::Image(hdr_excess_image), .viewType = vk::ImageViewType::e2D,
+                .format = vk::Format::eR16G16B16A16Sfloat,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            }));
+            hdr_excess_width = w;
+            hdr_excess_height = h;
+            std::printf("HDR excess: %ux%u RGBA16F beside the UI image (written by the upscaler)\n",
+                        w, h);
+        }
     }
     if (new_depth) {
         ui_depth_view.reset();

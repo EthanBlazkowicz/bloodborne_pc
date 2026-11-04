@@ -151,14 +151,14 @@ void main() {
         // bright as the chain made it). The black floor (the menu's slider, OLED): the darkest
         // greys down to true black, the rest of the range stretched to keep its white.
         linear = sdr_linear;
-        if ((hdr.flags & FLAG_EXCESS) != 0u) {
-            // The chain's tone mapper (hdr/bb_composite_hdr.frag: Vanilla+, rolled off to the
-            // peak) already shaped the highlights, so the light comes back above untouched and
-            // stops at the peak, as the reference does (hdr_output.frag: min(sdr_linear * gain,
-            // peak_white)). Rolling off a second time here compressed the top twice: measured
-            // 648.90 nits on a configured 790, against the reference's 791.01.
-            linear = min(linear, vec3(peak_white));
-        }
+        // The chain shaped its highlights already (the game's curve below the knee, the
+        // extension above it, rolled off to the peak), so nothing expands them here and they stop
+        // at the peak: the reference's min(sdr_linear * gain, peak_white). Rolling off a second
+        // time compressed the top twice (measured 648.90 nits on a configured 790, against the
+        // reference's 791.01). Not tied to FLAG_EXCESS: a frame that carries above-white without
+        // the excess image (TAA before its transfer, a frame whose encode did not run) would
+        // otherwise decode to several times the peak instead of stopping at it.
+        linear = min(linear, vec3(peak_white));
         if (hdr.black_floor > 0.0) {
             linear = max(linear - vec3(hdr.black_floor), vec3(0.0)) / (1.0 - hdr.black_floor);
         }

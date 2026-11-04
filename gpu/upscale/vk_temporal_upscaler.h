@@ -85,9 +85,10 @@ public:
         return enabled;
     }
     /// Native+: the excess above the game's white, per output pixel (empty until the upscaler
-    /// has run once).
+    /// has run once, and empty on a frame whose transfer did not run — the image would still hold
+    /// the frame before it, and lifting this one by it would be wrong).
     [[nodiscard]] vk::ImageView HdrExcessView() const {
-        return hdr_excess_view ? *hdr_excess_view : vk::ImageView{};
+        return hdr_excess_view && hdr_excess_fresh ? *hdr_excess_view : vk::ImageView{};
     }
     /// A temporal upscaler accumulates this frame (Active), for passes whose noise it resolves
     /// (VBAO).
@@ -448,8 +449,24 @@ private:
     /// Native+ (hdr_upscale_transfer.comp): what the chain made above the game's white, per
     /// output pixel, written by the encode transfer. The present samples it: the frame's own
     /// alpha does not survive the UI and post passes (measured: 1.0 by the display pass).
+    /// Made with the UI image (upscaler_ui.cpp) and rewritten by every upscaler's transfer.
     VideoCore::HostImage hdr_excess_image;
     vk::UniqueImageView hdr_excess_view;
+    u32 hdr_excess_width = 0, hdr_excess_height = 0;
+    /// The present samples it in ShaderReadOnlyOptimal, the encode writes it as storage: the
+    /// layout alternates every frame, so the first write starts from Undefined.
+    bool hdr_excess_read_layout = false;
+    /// The excess image holds this frame's result (the transfer encode ran).
+    bool hdr_excess_fresh = false;
+    /// The excess image exists at the output size.
+    [[nodiscard]] bool EnsureHdrExcess(u32 ow, u32 oh) const {
+        return hdr_excess_view && hdr_excess_width == ow && hdr_excess_height == oh;
+    }
+    /// The transfer encode (hdr/hdr_upscale_transfer.comp), on `cmdbuf`: the reconstruction's
+    /// result stays where it is, copied unclamped into the excess image and clamped to white in
+    /// place for the game's later passes. `already_encoded`: the result is in the chain's gamma
+    /// 2.2 domain (TAA, FSR 4) rather than linear light (DLSS).
+    void RecordHdrExcessEncode(vk::CommandBuffer cmdbuf, u32 ow, u32 oh, bool already_encoded);
     /// The encode side takes two bindings (the output in place, and the chain's frame for its
     /// alpha), so it has a layout of its own.
     vk::UniqueDescriptorSetLayout hdr_transfer_encode_desc_layout;

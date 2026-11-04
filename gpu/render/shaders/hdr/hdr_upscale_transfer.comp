@@ -34,7 +34,10 @@ layout(binding = 1, rgba16f) uniform writeonly image2D target_img;
 #endif
 
 layout(push_constant) uniform Params {
-    uint unused;
+    /// What the reconstruction handed back: 0 linear light (DLSS, which was given the decoded
+    /// frame), 1 the chain's own gamma 2.2 domain (TAA and FSR 4, which work on the game's frame
+    /// as it is). Only the first needs the encode back.
+    uint already_encoded;
 } params;
 
 void main() {
@@ -45,7 +48,7 @@ void main() {
 #ifdef BB_TRANSFER_ENCODE
     const vec4 c = imageLoad(target_img, p);
     // The reconstruction's result, gamma 2.2 BT.709 with everything above white kept.
-    const vec3 chain = bb_upscale_encode(c.rgb);
+    const vec3 chain = params.already_encoded != 0u ? c.rgb : bb_upscale_encode(c.rgb);
     // The display pass reads this image: it holds the chain's frame, so the light above the
     // game's white is carried in the value itself rather than encoded into an alpha (which the
     // reconstruction does not preserve, and which the game's own composite never writes).

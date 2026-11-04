@@ -53,3 +53,30 @@ light above white on this screen.
 
 Also still open: the shader cache holds the extended composite, so `BB_HDR_SCENE_CURVE=0` cannot
 disable the feature until the cache is separated the way the reference does it.
+
+## Correction (2026-11-04): the excess image existed only on DLSS's path
+
+Reading the transport out of the code at `a536437` before re-running the harness found that the
+light was not lost in the upscaler at all. The excess image — the only thing the present's
+above-white is read from — was created **inside the DLSS branch**
+(`vk_temporal_upscaler.cpp`, `if (ok4 && hdr_transfer)`, where `hdr_transfer` is defined only under
+`UseDlss()`). TAA, FSR 1, FSR 4 and FSR 3 never produced an excess image, so `HdrExcessView()`
+stayed empty, `FLAG_EXCESS` was never set in the present, and `hdr_output.frag` had nothing to lift
+the frame with. The table above reads "paper white with DLSS *and* with TAA" — but DLSS was the only
+row that could have lifted the frame, and on that row the picture did reach 791.
+
+So "it is the stage around the upscaler (the transfer, or the upscaler's own target format)" is
+**not established** and must not be assumed again. Two consequences, both now fixed:
+
+- the transfer encode runs for every upscaler whose result is the chain's frame
+  (`TemporalUpscaler::RecordHdrExcessEncode`); `hdr_upscale_transfer.comp`'s push constant says
+  whether that result is linear light (DLSS, which is handed the decoded frame) or already in the
+  game's gamma 2.2 (TAA, FSR 1, FSR 4, which are handed the game's own frame);
+- the peak clamp `min(linear, peak_white)` in `hdr_output.frag` no longer sits inside the
+  `FLAG_EXCESS` branch: a frame that carries above-white *without* an excess image would otherwise
+  decode to several times the peak instead of stopping at it.
+
+Whether a given reconstruction preserves values above 1 is now answerable per upscaler instead of
+inferred from one number: each one writes the excess image and logs
+`HDR excess: <w>x<h> RGBA16F from the ... result`, and the present only samples it on a frame whose
+transfer actually ran (`HdrExcessView()` requires this frame's result).
