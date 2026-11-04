@@ -99,10 +99,16 @@ ivec2 FrameSize() {
 // Where this swapchain pixel comes from in an output-sized chain image, and whether it is inside
 // the frame at all. The bars are outside it: the blit left them at the clear, so taking the clamped
 // border texel there painted the letterbox with the chain's edge.
-bool ChainTexel(ivec2 pixel, ivec2 chain_size, ivec2 frame_size, out ivec2 texel) {
-    const ivec4 r = FrameRect(chain_size, frame_size);
-    const vec2 c = vec2(max(chain_size, ivec2(1)));
-    const vec2 p = (vec2(pixel) - vec2(r.xy)) * c / vec2(max(r.zw, ivec2(1)));
+//
+// `chain_size` is the size of the image being fetched, `content_size` the frame the blit put inside
+// the swapchain. They are equal when the chain image is the frame, but the excess and the HUD
+// snapshot are the size the upscaler produced, which need not be the frame this present was handed:
+// the rect comes from the frame, the texel from the image.
+bool ChainTexel(ivec2 pixel, ivec2 chain_size, ivec2 content_size, ivec2 frame_size,
+                out ivec2 texel) {
+    const ivec4 r = FrameRect(content_size, frame_size);
+    const vec2 p = (vec2(pixel) - vec2(r.xy)) * vec2(max(chain_size, ivec2(1))) /
+                   vec2(max(r.zw, ivec2(1)));
     texel = clamp(ivec2(floor(p)), ivec2(0), chain_size - 1);
     return all(greaterThanEqual(pixel, r.xy)) && all(lessThan(pixel, r.xy + r.zw));
 }
@@ -167,7 +173,7 @@ void main() {
     if ((hdr.flags & FLAG_DEBUG) != 0u && (hdr.flags & FLAG_EXCESS) != 0u) {
         ivec2 ep;
         vec3 shown = vec3(1.0);
-        if (ChainTexel(pixel, FrameSize(), textureSize(game, 0), ep)) {
+        if (ChainTexel(pixel, textureSize(excess, 0), FrameSize(), textureSize(game, 0), ep)) {
             const vec3 chain = texelFetch(excess, ep, 0).rgb;
             const float over = max(chain.r, max(chain.g, chain.b)) - 1.0;
             shown = over > 0.5 ? vec3(1.0, 0.0, 0.0)
@@ -188,14 +194,14 @@ void main() {
     // same operation on every channel and therefore leaves the colour where the chain put it.
     if ((hdr.flags & FLAG_EXCESS) != 0u) {
         ivec2 ep;
-        if (ChainTexel(pixel, FrameSize(), textureSize(game, 0), ep)) {
+        if (ChainTexel(pixel, textureSize(excess, 0), FrameSize(), textureSize(game, 0), ep)) {
             const vec3 chain = texelFetch(excess, ep, 0).rgb;
             // Not on the HUD's pixels: the chain is the scene before the UI drew, so its value
             // there would replace the HUD with whatever was behind it.
             float ui = 0.0;
             if ((hdr.flags & FLAG_UI_MASK) != 0u) {
                 ivec2 mp;
-                if (ChainTexel(pixel, FrameSize(), textureSize(game, 0), mp)) {
+                if (ChainTexel(pixel, textureSize(snapshot, 0), FrameSize(), textureSize(game, 0), mp)) {
                     ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
                 }
             }
@@ -237,7 +243,7 @@ void main() {
         // brightened by the HUD's white over the game's — while the scene stays as it is.
         if ((hdr.flags & FLAG_UI_MASK) != 0u) {
             ivec2 mp;
-            if (ChainTexel(pixel, FrameSize(), textureSize(game, 0), mp)) {
+            if (ChainTexel(pixel, textureSize(snapshot, 0), FrameSize(), textureSize(game, 0), mp)) {
                 const float ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
                 linear = mix(linear, linear * max(hdr.ui_white, 0.0), ui);
             }
