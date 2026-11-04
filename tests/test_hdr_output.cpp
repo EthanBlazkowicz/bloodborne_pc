@@ -405,7 +405,7 @@ int main() {
         auto* texel = static_cast<u16*>(buffer.mapped);
         for (u32 p = 0; p < W; ++p) {
             texel[p * 4 + 0] = texel[p * 4 + 1] = texel[p * 4 + 2] = Half(rgb[p]);
-            texel[p * 4 + 3] = Half(p == 5 ? a5 : a_else);
+            texel[p * 4 + 3] = Half(p == 4 ? a5 : a_else);
         }
     };
     const auto fill16_rgb = [&](Buffer& buffer, float r, float g, float b) {
@@ -590,7 +590,7 @@ int main() {
     // menu layer is UI too, so its own pixel is composed at the same 1.5x and not at paper white.
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16 | FlagUiMask, 0.0f, 0.0f, 1.5f),
         {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
-         pq(decode(2.0f) * paper), pq(decode(0.5f) * 1.5f * paper), pq(1.5f * paper),
+         pq(peak), pq(decode(0.5f) * paper), pq(1.5f * paper),
          pq(decode(0.9f) * paper)});
     // scRGB: linear values as they are (80 nits = 1.0).
     run(scrgb_pipeline, out_scrgb, settings(FlagNative16 | FlagScRgb, 0.0f, 0.0f, 1.0f),
@@ -633,7 +633,7 @@ int main() {
     run(hdr10_pipeline, out_hdr10,
         settings(FlagNative16 | FlagExcess | FlagUiMask, 0.0f, 0.0f, 1.0f),
         {pq(0.503136f * paper), pq(0.503136f * paper), pq(1.058955f * paper),
-         pq(0.524135f * paper), pq(4.594793f * paper), pq(0.217638f * paper), pq(paper),
+         pq(0.524135f * paper), pq(4.594793f * paper), pq(0.503136f * paper), pq(paper),
          pq(0.855458f * paper)});
     // scRGB with exposure 0 and contrast 2: every scene pixel grades to -0.18, so the closing
     // max(c, 0) is what makes this 0 — the HDR10 encode clamps negatives anyway, but scRGB writes
@@ -666,6 +666,20 @@ int main() {
              pq(decode(0.7f) * 0.5f * paper), pq(790.0f * 0.5f),
              pq(decode(0.5f) * 0.5f * paper), pq(paper),
              pq(decode(0.9f) * 0.5f * paper)});
+    }
+
+    // Native+ at peak 790 with the HUD white above the peak: this is the only case that can pin the
+    // present's FINAL clamp. The masked column's 2.0 is capped to peak/paper = 3.8916 by the
+    // mid-chain clamp, then multiplied by ui_white 1.5 to 5.8374 — which the final clamp brings back
+    // to 3.8916 (790 nits). Without it the column would present 1185 nits, 45 codes away.
+    {
+        HdrPush hud_over_peak = settings(FlagNative16 | FlagUiMask, 0.0f, 0.0f, 1.5f);
+        hud_over_peak.peak = 790.0f;
+        hud_over_peak.ui_white = 1.5f;
+        run(hdr10_pipeline, out_hdr10, hud_over_peak,
+            {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper),
+             pq(decode(0.7f) * paper), pq(790.0f), pq(decode(0.5f) * paper), pq(1.5f * paper),
+             pq(decode(0.9f) * paper)});
     }
 
     std::printf("HDR output: PASS\n");

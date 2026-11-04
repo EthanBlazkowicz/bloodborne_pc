@@ -936,10 +936,12 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     static const bool debug = bb_env("BB_HDR_DEBUG") != nullptr;
     const bool native16 = HdrChannel::Native16();
     // Native+ needs the chain's float frame to carry above-white; a frame presented through an sRGB
-    // view holds decoded values that clamp at white. That happens when no upscaler redirects the
-    // display, and it is silent otherwise — say it once, because the symptom is exactly what a tone
-    // curve that produced nothing looks like (a frame pinned at paper white).
-    if (native16 && frame && frame->hdr_linear) {
+    // view holds decoded values that clamp at white. That is the no-upscaler path, and it is silent
+    // otherwise — say it once, because the symptom is exactly what a tone curve that produced
+    // nothing looks like (a frame pinned at paper white). Gated on the upscaler being off: the
+    // startup frames have no display redirect yet, so `hdr_linear` alone would fire a false alarm
+    // once per run before the upscaler takes over.
+    if (native16 && frame && frame->hdr_linear && !rasterizer->GetUpscaler().Enabled()) {
         static std::atomic<int> told_linear{0};
         if (told_linear.fetch_add(1) < 1) {
             std::printf("HDR native+: the frame is linear already (no upscaler redirected this "
