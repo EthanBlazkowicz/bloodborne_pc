@@ -627,6 +627,22 @@ int main() {
         {pq(0), pq(35.990f), pq(738.920f), pq(235.099f), pq(3657.892f), pq(35.990f),
          pq(paper), pq(570.925f)});
 
+    // Native+ with the excess AND the HUD mask: column 5 is UI, so the chain must not paint over
+    // it — the lift is skipped there and the frame's own 0.5 stands (44.18 nits), where lifting
+    // would give 102.14. This is the only case that exercises the mask-inside-the-lift path.
+    run(hdr10_pipeline, out_hdr10,
+        settings(FlagNative16 | FlagExcess | FlagUiMask, 0.0f, 0.0f, 1.0f),
+        {pq(0.503136f * paper), pq(0.503136f * paper), pq(1.058955f * paper),
+         pq(0.524135f * paper), pq(4.594793f * paper), pq(0.217638f * paper), pq(paper),
+         pq(0.855458f * paper)});
+    // scRGB with exposure 0 and contrast 2: every scene pixel grades to -0.18, so the closing
+    // max(c, 0) is what makes this 0 — the HDR10 encode clamps negatives anyway, but scRGB writes
+    // them. The ramp's 2.0 is harmless here (it is multiplied by 0), which is why this form is used
+    // instead of a contrast-only case: graded 2.0 is 9.0, where half precision alone is 0.0078.
+    run(scrgb_pipeline, out_scrgb,
+        settings(FlagNative16 | FlagScRgb, 0.0f, 0.0f, 1.0f, W, H, 0.0f, 2.0f, 1.0f, 1.0f, 1.0f),
+        {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f});
+
     std::printf("HDR output: PASS\n");
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);
     vkDestroyPipeline(vk.device, scrgb_pipeline, nullptr);

@@ -77,14 +77,6 @@ public:
     static constexpr u32 FlagNative16 = 16; ///< Native+: the composite carries the scene's HDR
     static constexpr u32 FlagUiMask = 32;   ///< Native+: the snapshot's alpha is the HUD's mask
     static constexpr u32 FlagLinearFrame = 64; ///< Native+: the frame is linear already (sRGB view)
-    /// Native+ (hdr_probe 13): the encoder's own input by how far above the game's white it is —
-    /// dim grey below it, magenta past 1x, blue past 2x, red past 4x. The one reading of the peak
-    /// that needs no readback: an above-white frame shows it on the screen.
-    static constexpr u32 FlagPeakView = 128;
-    /// Native+ (hdr_probe 16): five squares in the frame's top right, white where the
-    /// encoder's input exceeds 1x, 2x, 4x, 8x and 16x the game's white. A reading of the peak
-    /// that survives any screenshot or tonemapping: white/black, not a level.
-    static constexpr u32 FlagPeakLadder = 256;
     /// Native+: binding 3 of the present holds what the chain made above white.
     static constexpr u32 FlagExcess = 512;
 
