@@ -273,9 +273,6 @@ struct Values {
     /// Diagnostic: dump this many presented frames (converted for viewing) into BB_DUMP_DIR
     /// (default out/dump), once per run. 0: off. Saved.
     std::atomic<int> hdr_dump{0};
-    /// Diagnostic: paint where the chain's image is above the game's white green (0: off, 1..5 as
-    /// BB_HDR_PROBE). Saved.
-    std::atomic<int> hdr_probe{0};
     /// Diagnostic: the composite's delta without the game's colour matrix (0: the matrix, 1: no
     /// matrix). Saved.
     std::atomic<int> hdr_nograde{0};

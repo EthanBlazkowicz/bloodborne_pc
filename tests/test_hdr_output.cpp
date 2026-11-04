@@ -643,6 +643,17 @@ int main() {
         settings(FlagNative16 | FlagScRgb, 0.0f, 0.0f, 1.0f, W, H, 0.0f, 2.0f, 1.0f, 1.0f, 1.0f),
         {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f});
 
+    // Native+ black floor with exposure 2: this is the case that pins the ORDER — the floor and the
+    // peak clamp run before the grade, so column 4 is clamped to the peak (4.9261) and then doubled
+    // to 2000 nits. Clamping after the grade would stop it at 790 and the two orders would agree on
+    // every other case in this file.
+    run(hdr10_pipeline, out_hdr10,
+        settings(FlagNative16, 0.0f, 0.1f, 1.0f, W, H, 2.0f, 1.0f, 1.0f, 1.0f, 1.0f),
+        {pq(0), pq(2.0f * (decode(0.5f) - 0.1f) / 0.9f * paper), pq(2.0f * paper),
+         pq(2.0f * (decode(0.7f) - 0.1f) / 0.9f * paper), pq(2.0f * peak),
+         pq(2.0f * (decode(0.5f) - 0.1f) / 0.9f * paper), pq(paper),
+         pq(2.0f * (decode(0.9f) - 0.1f) / 0.9f * paper)});
+
     std::printf("HDR output: PASS\n");
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);
     vkDestroyPipeline(vk.device, scrgb_pipeline, nullptr);

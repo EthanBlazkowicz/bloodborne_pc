@@ -64,7 +64,6 @@ BB_ENV(BB_HDR_NOGRADE, SETTING, "=1: the chain's colour matrix off (diagnostic)"
 BB_ENV(BB_HDR_DUMP, SETTING, "=0..100: dump this many presented frames (written into the data folder)")
 BB_ENV(BB_HDR_DEBUG, SETTING, "=1: the HDR encode as a heat map of the gain")
 BB_ENV(BB_HDR_TRACE, SETTING, "=1: log the 16-bit chain's accesses for one frame")
-BB_ENV(BB_HDR_PROBE, SETTING, "=1..5: a chain pass draws itself in colour")
 BB_ENV(BB_HDR_EXPOSURE, SETTING, "=0..2 (1): native+'s user grading, exposure")
 BB_ENV(BB_HDR_CONTRAST, SETTING, "=0..2 (1): native+'s user grading, contrast")
 BB_ENV(BB_HDR_HIGHLIGHTS, SETTING, "=0..2 (1): native+'s user grading, highlights")

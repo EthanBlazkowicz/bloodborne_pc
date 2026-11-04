@@ -7,7 +7,7 @@ at its start (`Environment:` in the log) and warns about `BB_*` names it does no
 `=1: ...` / `=0: ...` / `=N: ...` say what that value does; `set: ...` means any value
 turns it on (even `0`).
 
-## Settings (111)
+## Settings (110)
 
 What players and the launchers set. The menu, bbport.ini and the launcher write most of them; set one by hand to override them.
 
@@ -67,7 +67,6 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_HDR_NOGRADE` | =1: the chain's colour matrix off (diagnostic) |
 | `BB_HDR_PAPER_WHITE` | =80..500 (203): nits of the game's white on the HDR display |
 | `BB_HDR_PEAK` | =100..4000 (1000): the display's peak, in nits (turns peak-auto off) |
-| `BB_HDR_PROBE` | =1..5: a chain pass draws itself in colour |
 | `BB_HDR_SATURATION` | =0..2 (1): native+'s user grading, saturation |
 | `BB_HDR_SCENE_CURVE` | =1: extend the game's own composite tone curve above its knee (native+); the delta pass stands down |
 | `BB_HDR_SCENE_GRADING` | =0..100 (100): the colour table's strength, in % |

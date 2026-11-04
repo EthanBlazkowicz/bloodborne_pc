@@ -395,7 +395,7 @@ void Load() {
         {"BB_HDR_HIGHLIGHTS", "hdr_highlights"},    {"BB_HDR_SHADOWS", "hdr_shadows"},
         {"BB_HDR_SATURATION", "hdr_saturation"},    {"BB_HDR_SCENE_GRADING", "hdr_scene_grading"},
         {"BB_HDR_LUT_BRIDGE", "hdr_lut_bridge"},  {"BB_HDR_SWAP", "hdr_swap"},             {"BB_HDR_DUMP", "hdr_dump"},
-        {"BB_HDR_PROBE", "hdr_probe"},          {"BB_HDR_NOGRADE", "hdr_nograde"},
+        {"BB_HDR_NOGRADE", "hdr_nograde"},
         {"BB_HDR_DELTA", "hdr_delta"},          {"BB_HDR_GLOW", "hdr_glow"},
     };
     for (const auto& [env, key] : env_keys) {
