@@ -79,18 +79,19 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     if (!info.Deserialize(ar)) {
         return false;
     }
-    // The decision travels with the program (this session's setting decides every translation), so
-    // a cached or imported one that disagrees was built under the other setting: its SPIR-V has the
-    // opposite shape from the flag and running it would either extend the curve while the delta also
-    // runs, or extend nothing while the delta is suppressed. Refusing here is what keeps one
-    // decision per program on every path — including the live permutations that inherit it.
-    if (info.uses_tone_curve != Shader::Native::ToneCurveEnabled()) {
+    // The decision travels with the program, and only one direction is dangerous: a cached program
+    // whose shader was EXTENDED while this session has the extension off would run the extended
+    // curve with the delta on top of it. The other direction is ordinary — every vertex, compute and
+    // non-composite fragment has the flag clear, and a composite that was not extended simply keeps
+    // its delta — so the check must not refuse those, or the cache would be dead whenever the
+    // extension is on.
+    if (info.uses_tone_curve && !Shader::Native::ToneCurveEnabled()) {
         static u32 reported = 0;
         if (reported++ < 3) {
             LOG_WARNING(Render_Vulkan,
-                        "Cached program {:x} was built with the tone curve {} this session's setting; "
-                        "compiling it live",
-                        info.pgm_hash, info.uses_tone_curve ? "on, not off" : "off, not on");
+                        "Cached program {:x} was compiled with the tone curve extended, but this "
+                        "session has the extension off; compiling it live",
+                        info.pgm_hash);
         }
         return false;
     }

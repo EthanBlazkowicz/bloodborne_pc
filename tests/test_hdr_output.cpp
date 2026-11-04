@@ -501,7 +501,10 @@ int main() {
             float got;
             if (out.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
                 const u32 word = words[p];
-                got = float((word >> 20) & 0x3FF) / 1023.0f; // the red channel
+                // A2B10G10R10_PACK32 names its components from the most significant bits down, so
+                // bits 29..20 are blue. Every case here is grey, which is why the name never
+                // mattered; a coloured case must read the channel it means.
+                got = float((word >> 20) & 0x3FF) / 1023.0f; // blue
             } else {
                 // The 16F output: its texels are halfs; back to white-relative.
                 const auto* halves = static_cast<const u16*>(read.mapped);
@@ -552,6 +555,12 @@ int main() {
          pq((decode(0.7f) - 0.1f) / 0.9f * paper), pq(peak),
          pq((decode(0.5f) - 0.1f) / 0.9f * paper), pq(paper),
          pq((decode(0.9f) - 0.1f) / 0.9f * paper)});
+    // Native+ with a strong black floor: the clamp has to be what lands column 4 on the peak, and
+    // the excursion is large enough that a shader without the clamp cannot pass — the floor lifts
+    // 4.5948 to 8.1896, so an unclamped output would be 1662 nits against the expected 1000.
+    run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 0.0f, 0.5f, 1.0f),
+        {pq(0), pq(0), pq(paper), pq(0), pq(peak), pq(0), pq(paper),
+         pq((decode(0.9f) - 0.5f) / 0.5f * paper)});
     // Native+ with the HUD mask: column 5 is UI, shown at UI Brightness (1.5x paper white). The
     // menu layer is UI too, so its own pixel is composed at the same 1.5x and not at paper white.
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16 | FlagUiMask, 0.0f, 0.0f, 1.5f),
@@ -566,6 +575,12 @@ int main() {
     // there (0.0 and 0.9): that is the guard for the rect the present computes from the content
     // size. Column 6 is the menu's own pixel and is inside, so it still reads paper white.
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 0.0f, 0.0f, 1.0f, 6, 1),
+        {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
+         pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(0)});
+    // Native+ with an odd bar: a 7x1 frame in the 8x1 surface. The blit centres by integer halving,
+    // (8 - 7) / 2 = 0, so the one bar column is on the right — the float window this replaced would
+    // have put it on the left instead, which is why this case exists.
+    run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 0.0f, 0.0f, 1.0f, 7, 1),
         {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
          pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(0)});
 

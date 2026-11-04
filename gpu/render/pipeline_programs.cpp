@@ -432,19 +432,19 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         perm_idx = modules.size();
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
         const auto module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
-        // The live translation decides the tone curve again. It must agree with the program the
-        // module is joining: UsesToneCurve() is read from the program, so a disagreement means the
-        // module runs the opposite shape from the flag — extended with the delta on top, or plain
-        // with the delta suppressed. Translation is deterministic per code and LoadShaderMeta
-        // refuses a program built under the other setting, so this only happens with a mixed cache;
-        // the translation that just ran is the truth, so the flag is what gets corrected.
+        // The live translation decides the tone curve again. It cannot disagree in a consistent
+        // session — translation is deterministic per code, and LoadShaderMeta refuses a program
+        // extended under a session with the extension off — so a difference here means the lab's
+        // thread-local override (shader/native/tone_curve.h) raced the preload thread. The
+        // program's flag is shared by every module it already holds and UsesToneCurve() reads it
+        // live, so correcting it here would change the shape of pipelines that were built against
+        // the old value; say so instead, and leave the decision the program was built with.
         if (new_info.uses_tone_curve != info.uses_tone_curve) {
             LOG_WARNING(Render_Vulkan,
-                        "Program {:x}: a new permutation decided the tone curve {}, the program said "
-                        "{}; taking the permutation's",
+                        "Program {:x}: a new permutation decided the tone curve {}, the program {}; "
+                        "keeping the program's (the lab override changed mid-session?)",
                         info.pgm_hash, new_info.uses_tone_curve ? "on" : "off",
                         info.uses_tone_curve ? "on" : "off");
-            info.uses_tone_curve = new_info.uses_tone_curve;
         }
         PipelineStore::SaveShaderMeta(info, spec, HashCombine(params.hash, perm_idx), perm_idx);
         std::unique_lock lk{programs_mutex};
