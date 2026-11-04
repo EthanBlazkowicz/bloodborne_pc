@@ -228,11 +228,11 @@ void main() {
         // the excess image (TAA before its transfer, a frame whose encode did not run) would
         // otherwise decode to several times the peak instead of stopping at it.
         linear = min(linear, vec3(peak_white));
-        // The user grading (the menu's sliders), before the HUD and the display encode.
+        // The user grading (the menu's sliders), before the HUD and the display encode. Grading can
+        // lift a pixel back above the peak (exposure 2 doubles it); the single ceiling at the end of
+        // this pass stops it, so there is deliberately no clamp here — a second one would be
+        // untestable, because nothing between the two can lower a value back under the bound.
         linear = Grade(linear);
-        // Grading can lift a pixel back above the peak (exposure 2 doubles it): the scene stops at
-        // the display's peak, and the HUD's own white is applied after this.
-        linear = min(linear, vec3(peak_white));
         // The HUD (the mask in the snapshot's alpha): shown at UI Brightness — its pixels
         // brightened by the HUD's white over the game's — while the scene stays as it is.
         if ((hdr.flags & FLAG_UI_MASK) != 0u) {

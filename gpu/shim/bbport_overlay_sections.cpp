@@ -16,6 +16,7 @@
 #include "bbport_guest_hooks.h"
 #include "imgui.h"
 #include "render/compile_log.h"
+#include "shader/native/tone_curve.h"
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
 
@@ -884,13 +885,26 @@ void HdrSection(BbSettings::Values& s) {
             s.hdr_mode.load(std::memory_order_relaxed) == BbSettings::HdrModeScene;
         ImGui::BeginDisabled(!native_plus);
         ImGui::SeparatorText(BbSettings::MenuText("Native+", "Native+"));
-        Slider(BbSettings::MenuText("Highlight range", "Диапазон светов"), s.hdr_knee,
-               BbSettings::HdrKneeMin, BbSettings::HdrKneeMax);
-        Hint(BbSettings::MenuText(
-            "How far up the game's white its own tone curve stands: below it the picture is the "
-            "game's, above it the highlights run to the peak (60 % by default).",
-            "Насколько высоко от белого игры стоит её собственная кривая: ниже картинка — "
-            "игровая, выше света уходят к пику (по умолчанию 60 %)."));
+        // The knee is the extension's parameter, so it only does anything when the game's own curve
+        // was extended: with the extension off (the default) the delta pass draws HDR instead and
+        // has its own anchor. Disabled rather than silently inert, the way boost is in native+.
+        {
+            const bool extended = Shader::Native::ToneCurveEnabled();
+            ImGui::BeginDisabled(!extended);
+            Slider(BbSettings::MenuText("Highlight range", "Диапазон светов"), s.hdr_knee,
+                   BbSettings::HdrKneeMin, BbSettings::HdrKneeMax);
+            ImGui::EndDisabled();
+            Hint(BbSettings::MenuText(
+                extended ? "How far up the game's white its own tone curve stands: below it the "
+                           "picture is the game's, above it the highlights run to the peak (60 % by "
+                           "default)."
+                         : "Applies only when the game's own tone curve is extended "
+                           "(BB_HDR_SCENE_CURVE=1); without it the delta pass shapes the highlights.",
+                extended ? "Насколько высоко от белого игры стоит её собственная кривая: ниже "
+                           "картинка — игровая, выше света уходят к пику (по умолчанию 60 %)."
+                         : "Действует только когда кривая самой игры продлена "
+                           "(BB_HDR_SCENE_CURVE=1); иначе света формирует дельта-проход."));
+        }
         Slider(BbSettings::MenuText("Bloom", "Свечение (Bloom)"), s.hdr_bloom, 0.0f, 100.0f);
         Hint(BbSettings::MenuText(
             "The glow around lights: 50 is the game's own. Applies live (the composite's delta "
@@ -906,6 +920,16 @@ void HdrSection(BbSettings::Values& s) {
             "игры. Применяется сразу."));
         Slider(BbSettings::MenuText("UI Brightness", "Яркость интерфейса"), s.hdr_ui_nits,
                BbSettings::HdrUiNitsMin, BbSettings::HdrUiNitsMax);
+        // The present cannot put the HUD above the display's peak, so say so rather than showing a
+        // number it is not honouring.
+        if (s.hdr_ui_nits.load(std::memory_order_relaxed) >
+            BbSettings::HdrPeakNits(BbSettings::Get())) {
+            ImGui::TextDisabled("%s", BbSettings::MenuText(
+                                         "Capped to the display's peak: the HUD cannot be brighter "
+                                         "than the panel can show.",
+                                         "Ограничено пиком дисплея: интерфейс не может быть ярче, "
+                                         "чем способна показать панель."));
+        }
         Hint(BbSettings::MenuText(
             "The HUD and menus' white, whatever the game's white (they are told apart by "
             "comparing the frame with the one before the UI drew; a pixel the UI left alone "

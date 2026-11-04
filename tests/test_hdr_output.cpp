@@ -401,11 +401,12 @@ int main() {
     };
     const auto decode = [](float encoded) { return std::pow(std::max(encoded, 0.0f), 2.2f); };
 
-    const auto fill16 = [&](Buffer& buffer, const std::array<float, W>& rgb, float a5, float a_else) {
+    const auto fill16 = [&](Buffer& buffer, const std::array<float, W>& rgb, float a5, float a_else,
+                            u32 mask_column = 4) {
         auto* texel = static_cast<u16*>(buffer.mapped);
         for (u32 p = 0; p < W; ++p) {
             texel[p * 4 + 0] = texel[p * 4 + 1] = texel[p * 4 + 2] = Half(rgb[p]);
-            texel[p * 4 + 3] = Half(p == 4 ? a5 : a_else);
+            texel[p * 4 + 3] = Half(p == mask_column ? a5 : a_else);
         }
     };
     const auto fill16_rgb = [&](Buffer& buffer, float r, float g, float b) {
@@ -427,7 +428,7 @@ int main() {
 
     u32 case_index = 0;
     const auto run = [&](VkPipeline pipeline, const Image& out, const HdrPush& push,
-                         const std::array<float, W>& expected) {
+                         const std::array<float, W>& expected, u32 mask_column = 4) {
         VkDescriptorSet set{};
         const VkDescriptorSetAllocateInfo set_allocate{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -471,7 +472,7 @@ int main() {
         vkCmdCopyBufferToImage(vk.cmd, uploads[0].buffer, game.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
         fill8(uploads[1], 1.0f); // the menu: white at column 6
         vkCmdCopyBufferToImage(vk.cmd, uploads[1].buffer, overlay.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
-        fill16(uploads[2], values, 1.0f, 0.0f); // the HUD's mask at column 5
+        fill16(uploads[2], values, 1.0f, 0.0f, mask_column); // the HUD's mask, at the case's column
         vkCmdCopyBufferToImage(vk.cmd, uploads[2].buffer, snapshot.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
         fill16_rgb(uploads[3], 2.0f, 0.5f, 0.7f); // the chain's frame above white
         vkCmdCopyBufferToImage(vk.cmd, uploads[3].buffer, excess.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
@@ -633,8 +634,8 @@ int main() {
     run(hdr10_pipeline, out_hdr10,
         settings(FlagNative16 | FlagExcess | FlagUiMask, 0.0f, 0.0f, 1.0f),
         {pq(0.503136f * paper), pq(0.503136f * paper), pq(1.058955f * paper),
-         pq(0.524135f * paper), pq(4.594793f * paper), pq(0.503136f * paper), pq(paper),
-         pq(0.855458f * paper)});
+         pq(0.524135f * paper), pq(4.594793f * paper), pq(0.217638f * paper), pq(paper),
+         pq(0.855458f * paper)}, /*mask_column=*/5);
     // scRGB with exposure 0 and contrast 2: every scene pixel grades to -0.18, so the closing
     // max(c, 0) is what makes this 0 — the HDR10 encode clamps negatives anyway, but scRGB writes
     // them. The ramp's 2.0 is harmless here (it is multiplied by 0), which is why this form is used
