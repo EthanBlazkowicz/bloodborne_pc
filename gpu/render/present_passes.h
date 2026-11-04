@@ -63,6 +63,12 @@ public:
         float highlights = 1.0f;
         float shadows = 1.0f;
         float saturation = 1.0f;
+        /// Native+: the size of the frame the blit put inside the swapchain (the chain's output
+        /// size). The present needs it to tell the bars from the picture: with an output-sized
+        /// image bound it could be read from the texture, but the bars rule must also hold on
+        /// frames that bind none (a menu frame, an encode that did not run).
+        u32 content_width = 0;
+        u32 content_height = 0;
     };
     static constexpr u32 FlagScRgb = 1;     ///< scRGB (linear BT.709) output, else HDR10 PQ
     static constexpr u32 FlagOverlay = 2;   ///< the menu layer is drawn

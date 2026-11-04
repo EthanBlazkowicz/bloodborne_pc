@@ -32,6 +32,10 @@ layout(push_constant) uniform Settings {
     float highlights;
     float shadows;
     float saturation;
+    // The frame the blit put inside the swapchain (the chain's output size): the bars are what is
+    // outside it, and this is known even on frames that bind no output-sized image.
+    uint content_width;
+    uint content_height;
 } hdr;
 
 const uint FLAG_SCRGB = 1u;   // scRGB output, else HDR10
@@ -84,6 +88,12 @@ ivec4 FrameRect(ivec2 chain_size, ivec2 frame_size) {
 bool InsideFrame(ivec2 pixel, ivec2 chain_size, ivec2 frame_size) {
     const ivec4 r = FrameRect(chain_size, frame_size);
     return all(greaterThanEqual(pixel, r.xy)) && all(lessThan(pixel, r.xy + r.zw));
+}
+
+// The frame's size inside the swapchain, from the push constants: the same on every native+ frame,
+// including the ones that bind no output-sized image (a menu frame, an encode that did not run).
+ivec2 FrameSize() {
+    return max(ivec2(hdr.content_width, hdr.content_height), ivec2(1));
 }
 
 // Where this swapchain pixel comes from in an output-sized chain image, and whether it is inside
@@ -157,7 +167,7 @@ void main() {
     if ((hdr.flags & FLAG_DEBUG) != 0u && (hdr.flags & FLAG_EXCESS) != 0u) {
         ivec2 ep;
         vec3 shown = vec3(1.0);
-        if (ChainTexel(pixel, textureSize(excess, 0), textureSize(game, 0), ep)) {
+        if (ChainTexel(pixel, FrameSize(), textureSize(game, 0), ep)) {
             const vec3 chain = texelFetch(excess, ep, 0).rgb;
             const float over = max(chain.r, max(chain.g, chain.b)) - 1.0;
             shown = over > 0.5 ? vec3(1.0, 0.0, 0.0)
@@ -178,14 +188,14 @@ void main() {
     // same operation on every channel and therefore leaves the colour where the chain put it.
     if ((hdr.flags & FLAG_EXCESS) != 0u) {
         ivec2 ep;
-        if (ChainTexel(pixel, textureSize(excess, 0), textureSize(game, 0), ep)) {
+        if (ChainTexel(pixel, FrameSize(), textureSize(game, 0), ep)) {
             const vec3 chain = texelFetch(excess, ep, 0).rgb;
             // Not on the HUD's pixels: the chain is the scene before the UI drew, so its value
             // there would replace the HUD with whatever was behind it.
             float ui = 0.0;
             if ((hdr.flags & FLAG_UI_MASK) != 0u) {
                 ivec2 mp;
-                if (ChainTexel(pixel, textureSize(snapshot, 0), textureSize(game, 0), mp)) {
+                if (ChainTexel(pixel, FrameSize(), textureSize(game, 0), mp)) {
                     ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
                 }
             }
@@ -224,16 +234,18 @@ void main() {
         // brightened by the HUD's white over the game's — while the scene stays as it is.
         if ((hdr.flags & FLAG_UI_MASK) != 0u) {
             ivec2 mp;
-            if (ChainTexel(pixel, textureSize(snapshot, 0), textureSize(game, 0), mp)) {
+            if (ChainTexel(pixel, FrameSize(), textureSize(game, 0), mp)) {
                 const float ui = clamp(texelFetch(snapshot, mp, 0).a, 0.0, 1.0);
                 linear = mix(linear, linear * max(hdr.ui_white, 0.0), ui);
             }
         }
         // The bars are outside the frame and stay black whatever the grade or the black floor does
-        // to black (the grade's contrast below 1 lifts 0 by 0.18*(1-k), 18 nits at 0.5). The port's
+        // to black (the grade's contrast below 1 lifts 0 by 0.18*(1-k), 18 nits at 0.5). Gated on
+        // native+ and not on the excess: a frame without one (a menu, an encode that did not run)
+        // would otherwise keep lifted bars and flicker against the gameplay around it. The port's
         // menu is composited further down, so it can still draw over them.
-        if ((hdr.flags & FLAG_EXCESS) != 0u &&
-            !InsideFrame(pixel, textureSize(excess, 0), textureSize(game, 0))) {
+        if ((hdr.flags & FLAG_NATIVE16) != 0u &&
+            !InsideFrame(pixel, FrameSize(), textureSize(game, 0))) {
             linear = vec3(0.0);
         }
     } else {

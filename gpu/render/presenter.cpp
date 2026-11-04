@@ -982,6 +982,10 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
                               BbSettings::HdrGradeMin, BbSettings::HdrGradeMax),
         .saturation = std::clamp(settings.hdr_saturation.load(std::memory_order_relaxed),
                                  BbSettings::HdrGradeMin, BbSettings::HdrGradeMax),
+        // The rect the blit used: the shader needs it to tell the bars from the picture, and it
+        // must know it even on frames that bind no output-sized image.
+        .content_width = content.width,
+        .content_height = content.height,
     };
     const vk::ImageMemoryBarrier2 to_attachment{
         .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
@@ -1192,13 +1196,10 @@ bool Presenter::PresentImage(Frame* frame, vk::Image source, bool last,
         }
         // The trigger used to be TakePresentPeakRequest(), which no longer exists (nothing declared
         // it: the branch did not compile past this line). What it encoded is still wanted here —
-        // the dumps start when the level renders, not at the first present. native+ derives that
-        // from this frame's excess (set only when the transfer encode ran; source_width alone is
-        // true from the first frame, because the display redirect is on for the whole session);
-        // expand has no chain, so it keeps the display-image test.
-        const bool level_up =
-            frame && (HdrChannel::Native16() ? frame->hdr_excess != vk::ImageView{}
-                                             : frame->source_width != 0);
+        // the dumps start once the reconstruction runs, not at the first present. `hdr_excess` is
+        // exactly "this frame's transfer encode ran"; the counter only exists when HdrChannel is
+        // enabled, so there is no other mode to test for.
+        const bool level_up = frame && frame->hdr_excess != vk::ImageView{};
         if (hdr_dump_left > 0 && left == 0 && level_up) {
             --hdr_dump_left;
             left = 1;
