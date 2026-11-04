@@ -564,7 +564,7 @@ int main() {
     // Above the knee the brightest pixels run to the peak and clamp there; the menu's own pixel
     // stays at paper white.
     run(hdr10_pipeline, out_hdr10, settings(0, 1.0f, 0.0f, 1.0f),
-        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(peak), pq(decode(0.7f) * paper), 1.0f,
+        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(peak), pq(decode(0.7f) * paper), pq(peak),
          pq(decode(0.5f) * paper), pq(paper), pq(decode(0.9f) * paper)});
     // Native+: nothing expanded — 2.0 decodes above the game's white; the menu forces paper
     // white at its pixel.
@@ -624,7 +624,7 @@ int main() {
     // catches a swapped or mis-scaled slider (the identity cases cannot).
     run(hdr10_pipeline, out_hdr10,
         settings(FlagNative16, 0.0f, 0.0f, 1.0f, W, H, 1.0f, 2.0f, 2.0f, 0.5f, 1.0f),
-        {pq(0), pq(35.990f), pq(738.920f), pq(235.099f), pq(3657.892f), pq(35.990f),
+        {pq(0), pq(35.990f), pq(738.920f), pq(235.099f), pq(peak), pq(35.990f),
          pq(paper), pq(570.925f)});
 
     // Native+ with the excess AND the HUD mask: column 5 is UI, so the chain must not paint over
@@ -650,7 +650,7 @@ int main() {
     run(hdr10_pipeline, out_hdr10,
         settings(FlagNative16, 0.0f, 0.1f, 1.0f, W, H, 2.0f, 1.0f, 1.0f, 1.0f, 1.0f),
         {pq(0), pq(2.0f * (decode(0.5f) - 0.1f) / 0.9f * paper), pq(2.0f * paper),
-         pq(2.0f * (decode(0.7f) - 0.1f) / 0.9f * paper), pq(2.0f * peak),
+         pq(2.0f * (decode(0.7f) - 0.1f) / 0.9f * paper), pq(peak),
          pq(2.0f * (decode(0.5f) - 0.1f) / 0.9f * paper), pq(paper),
          pq(2.0f * (decode(0.9f) - 0.1f) / 0.9f * paper)});
 

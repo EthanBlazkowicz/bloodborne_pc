@@ -795,7 +795,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                       u32(std::clamp(int(settings.hdr_lut_bridge.load(std::memory_order_relaxed)), 0,
                                      1)) +
                           1u,
-                      HdrChannel::ChainProbe(), std::bit_cast<u32>(strength) + 1u};
+                      0u, std::bit_cast<u32>(strength) + 1u};
             hdr_bb_set = true;
         } else if (ps_info->pgm_hash == 0xf7229091ull || ps_info->pgm_hash == 0x57f3b8c2ull ||
                    ps_info->pgm_hash == 0xed4c7668ull || ps_info->pgm_hash == 0x38d65b32ull) {
@@ -817,7 +817,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                     swap |= 16u;
                 }
             }
-            hdr_bb = {swap, std::bit_cast<u32>(HdrChannel::Knee()), HdrChannel::ChainProbe(),
+            hdr_bb = {swap, std::bit_cast<u32>(HdrChannel::Knee()), 0u,
                       std::bit_cast<u32>(bloom)};
             hdr_bb_set = true;
         }
@@ -872,7 +872,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         if (BbSettings::Get().hdr_nograde.load(std::memory_order_relaxed) != 0) {
             swap |= 16u;
         }
-        std::array<u32, 12> probe{swap, bits(HdrChannel::Knee()), HdrChannel::ChainProbe(),
+        std::array<u32, 12> probe{swap, bits(HdrChannel::Knee()), 0u,
                                   bits(bloom)};
         std::array<u32, 12> game_reg{push_data.bb_hdr[0], push_data.bb_hdr[1],
                                      push_data.bb_hdr[2], push_data.bb_hdr[3]};
@@ -929,7 +929,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     if (ps_info && HdrChannel::Native16() && HdrChannel::IsCompositeVariant(ps_info->pgm_hash)) {
         static std::atomic<bool> hdr_consts_done{false};
         if (!hdr_consts_done.exchange(true)) {
-            std::printf("HDR probe: ChainProbe %u, knee %.3f\n", HdrChannel::ChainProbe(),
+            std::printf("HDR probe: ChainProbe %u, knee %.3f\n", 0u,
                         HdrChannel::Knee());
             const auto* stage = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
             u32 n = 0;

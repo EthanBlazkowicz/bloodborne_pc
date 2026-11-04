@@ -292,6 +292,11 @@ void main() {
             linear = mix(under, menu_linear, clamp(menu.a * 4.0, 0.0, 1.0));
         }
     }
+    // The peak is the frame's ceiling and the metadata's MaxCLL, but two things multiply after the
+    // clamp inside the native+ branch: the user's exposure/contrast and the menu. Neither may
+    // present light the display was not told to expect, so the last word is here. UI white above the
+    // peak (hdr_ui_nits > hdr_peak) is the one deliberate exception, and the metadata follows it.
+    linear = min(linear, vec3(max(peak_white, hdr.ui_white)));
     if ((hdr.flags & FLAG_SCRGB) != 0u) {
         color = vec4(linear * (hdr.paper_white / 80.0), 1.0);
     } else {

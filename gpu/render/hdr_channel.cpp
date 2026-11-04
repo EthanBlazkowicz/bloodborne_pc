@@ -604,11 +604,6 @@ bool HdrChannel::ChainTargetAddress(VAddr address) {
     return native16_targets.contains(address);
 }
 
-u32 HdrChannel::ChainProbe() {
-    // The chain probes were the peak work's instruments; nothing draws them now.
-    return 0;
-}
-
 bool HdrChannel::Native16Fixed() {
     return Native16() && FixedRenderSize().first != 0;
 }

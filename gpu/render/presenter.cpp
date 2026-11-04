@@ -905,8 +905,15 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     const float expand_white = std::max(1.0f + (peak / paper_white - 1.0f) * boost, 1.0f);
     // MaxLuminance is the display's peak; MaxCLL the brightest content. In native+ the chain
     // already extends the scene above the game's white, so the content can reach the display's
-    // peak itself — an SDR-derived 203 made HDR analysis tools report the content as 203.
-    swapchain.SetHdrMetadata(peak, HdrChannel::Native16() ? peak : std::min(peak, paper_white * expand_white),
+    // peak itself — an SDR-derived 203 made HDR analysis tools report the content as 203. The one
+    // thing that may exceed it is UI white (hdr_ui_nits above hdr_peak), which the present allows
+    // and the metadata has to declare, or the display would tone-map the HUD down.
+    const float ui_nits = std::clamp(settings.hdr_ui_nits.load(std::memory_order_relaxed),
+                                     BbSettings::HdrUiNitsMin, BbSettings::HdrUiNitsMax);
+    swapchain.SetHdrMetadata(peak,
+                             HdrChannel::Native16()
+                                 ? std::max(peak, ui_nits)
+                                 : std::min(peak, paper_white * expand_white),
                              paper_white);
     static const bool told_metadata = [] {
         const auto& s = BbSettings::Get();

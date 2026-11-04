@@ -123,8 +123,7 @@ public:
     static u32 Debug();
     /// The chain probe (BB_HDR_PROBE, diagnostics): 1..5, else 0. A pass draws the value it
     /// runs as, to see where the chain breaks.
-    static u32 ChainProbe();
-    /// One traced frame (BB_HDR_TRACE): every access to the chain's targets logged, from a
+    static u32 ChainProbe();    /// One traced frame (BB_HDR_TRACE): every access to the chain's targets logged, from a
     /// display copy to the next (OnDisplayCopy bounds it).
     static bool Trace();
     /// GPU thread, at each display copy: starts or ends the traced frame.
