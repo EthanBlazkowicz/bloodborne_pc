@@ -61,6 +61,27 @@ evidence about the curve.
 A dark frame is untouched: the chain's values are all ≤ 1, so both the lift and the clamp are
 no-ops.
 
+## The tone-curve decision and the shader cache
+
+The extension is an IR rewrite, so an extended program and the game's own share a `pgm_hash` and no
+cache key can tell them apart. Three rules keep one decision per program:
+
+1. Extended programs live in their own cache subdirectory (`render/blob_store.cpp`), chosen by the
+   session's setting.
+2. The decision is written into the program's metadata (`Info::Serialize`, `ShaderMetaVersion` 9) and
+   is read back on load. `LoadShaderMeta` refuses the one dangerous direction — an extended program
+   under a session with the extension off, which would run the curve *and* the delta. The other
+   direction is ordinary (every vertex, compute and non-composite fragment has the flag clear) and is
+   accepted: such a program runs without the extension and keeps its delta.
+3. A program whose flag is clear translates its live permutations with the extension suppressed
+   (`pipeline_programs.cpp`), so a module can never be extended while its program says otherwise. The
+   consequence is deliberate: **programs imported from a recipe, or rebuilt by the cache rebuild, only
+   ever get the delta** — they are flag-0 by construction and stay that way. A session that wants the
+   game's own curve extended must translate the composite live.
+
+The pipeline asks `GraphicsPipeline::UsesToneCurve()` (read from the program's `Info`) and skips the
+delta pass for such a pipeline; that gate is what this whole chapter exists to keep honest.
+
 ## What the adversarial review changed (2026-11-04)
 
 Three defects, each proved by reading, none visible in a panel number:
