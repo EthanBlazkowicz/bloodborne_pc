@@ -129,15 +129,25 @@ void main() {
     }
     // Native+: the light the chain made above the game's white. The chain's own frame stays
     // RGBA16F through the reconstruction (hdr/hdr_upscale_transfer.comp) and the display pass
-    // reads it beside the game's 8-bit image. Only the height above white is taken from it, and
-    // it is applied by scaling: the colour stays the one the 8-bit image has at white, so this
-    // cannot tint the frame — where the frame has room left the chain is not consulted at all.
+    // reads it beside the game's 8-bit image.
+    //
+    // Per channel, and only where the frame has not got there already: the chain's encoded value
+    // where it is higher, the frame's own elsewhere. Taking the height of the brightest channel
+    // and scaling every channel by it kept the SDR chroma but not the highlight's: a chain pixel
+    // of (2.0, 0.5, 0.3) came out (2.0, 1.0, 0.6), so a saturated lamp core washed towards white.
+    // The max is taken in the encoded domain, before the single 2.2 decode below, which is the
+    // same operation on every channel and therefore leaves the colour where the chain put it.
     if ((hdr.flags & FLAG_EXCESS) != 0u) {
         const vec3 chain = texelFetch(excess, pixel, 0).rgb;
-        const float brightest = max(game_srgb.r, max(game_srgb.g, game_srgb.b));
-        const float top = max(chain.r, max(chain.g, chain.b));
-        if (brightest > 0.5 && top > brightest) {
-            game_srgb *= top / brightest;
+        // Not on the HUD's pixels: the chain is the scene before the UI drew, so its value there
+        // would replace the HUD with whatever was behind it.
+        float ui = 0.0;
+        if ((hdr.flags & FLAG_UI_MASK) != 0u) {
+            ui = clamp(texture(snapshot, gl_FragCoord.xy / vec2(textureSize(snapshot, 0))).a,
+                       0.0, 1.0);
+        }
+        if (ui <= 0.0) {
+            game_srgb = max(game_srgb, chain);
         }
     }
     const float white = max(mix(1.0, peak_white, clamp(hdr.boost, 0.0, 1.0)), 1.0);
@@ -146,11 +156,16 @@ void main() {
                           : SdrToLinear(game_srgb);
     vec3 linear;
     if ((hdr.flags & FLAG_NATIVE16) != 0u) {
-        // The 16-bit chain's frame: the game's encoded picture with the HDR delta above its
-        // white. Decoded here with the same 2.2; nothing expanded (the scene is already as
-        // bright as the chain made it). The black floor (the menu's slider, OLED): the darkest
-        // greys down to true black, the rest of the range stretched to keep its white.
+        // The 16-bit chain's frame: the game's encoded picture, above its white included. Decoded
+        // here with the same 2.2; nothing expanded (the scene is already as bright as the chain
+        // made it).
         linear = sdr_linear;
+        // The black floor first (the menu's slider, OLED): the darkest greys down to true black,
+        // the rest of the range stretched — 1/(1-f) keeps white at 1 but lifts anything already
+        // above it. Clamped after, not before, so the frame still stops at the peak.
+        if (hdr.black_floor > 0.0) {
+            linear = max(linear - vec3(hdr.black_floor), vec3(0.0)) / (1.0 - hdr.black_floor);
+        }
         // The chain shaped its highlights already (the game's curve below the knee, the
         // extension above it, rolled off to the peak), so nothing expands them here and they stop
         // at the peak: the reference's min(sdr_linear * gain, peak_white). Rolling off a second
@@ -159,9 +174,6 @@ void main() {
         // the excess image (TAA before its transfer, a frame whose encode did not run) would
         // otherwise decode to several times the peak instead of stopping at it.
         linear = min(linear, vec3(peak_white));
-        if (hdr.black_floor > 0.0) {
-            linear = max(linear - vec3(hdr.black_floor), vec3(0.0)) / (1.0 - hdr.black_floor);
-        }
         // The user grading (the menu's sliders), before the HUD and the display encode.
         linear = Grade(linear);
         // The HUD (the mask in the snapshot's alpha): shown at UI Brightness — its pixels
@@ -208,7 +220,10 @@ void main() {
         vec4 menu = texelFetch(overlay, pixel, 0);
         if (menu.a > 0.0) {
             vec3 under = (hdr.flags & FLAG_NATIVE16) != 0u ? linear : SdrToLinear(clamp(game_srgb, 0.0, 1.0));
-            vec3 menu_linear = SdrToLinear(clamp(menu.rgb, 0.0, 1.0));
+            // The port's own menu is UI, not scene: composed at the HUD's white (UI Brightness),
+            // never expanded — 1.0 of it is ui_nits, not paper white. Neutral (ui_white 1) leaves
+            // it exactly as before.
+            vec3 menu_linear = SdrToLinear(clamp(menu.rgb, 0.0, 1.0)) * max(hdr.ui_white, 0.0);
             linear = mix(under, menu_linear, clamp(menu.a * 4.0, 0.0, 1.0));
         }
     }
