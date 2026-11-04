@@ -262,10 +262,13 @@ int main() {
         u32 content_width, content_height;
     };
     constexpr u32 FlagScRgb = 1u, FlagOverlay = 2u, FlagNative16 = 16u, FlagUiMask = 32u;
+    constexpr u32 FlagExcess = 512u;
 
     constexpr u32 W = 8, H = 1;
     constexpr float paper = 203.0f, peak = 1000.0f;
-    constexpr std::array<float, W> values{0.0f, 0.5f, 1.0f, 0.7f, 2.0f, 0.5f, 2.0f, 0.9f};
+    // Column 0 is deliberately non-zero: a letterbox rect shifted to the LEFT can only be told from a
+    // correct one by a pixel whose content is not black.
+    constexpr std::array<float, W> values{0.3f, 0.5f, 1.0f, 0.7f, 2.0f, 0.5f, 2.0f, 0.9f};
 
     const VkPhysicalDeviceMemoryProperties memory_properties{
         [&] {
@@ -277,26 +280,30 @@ int main() {
     Image game = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT, W, H, 0);
     Image overlay = MakeImage(vk, memory_properties, VK_FORMAT_R8G8B8A8_UNORM, W, H, 0);
     Image snapshot = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT, W, H, 0);
+    // The chain's frame above white (binding 3): only the cases that set FlagExcess read it.
+    Image excess = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT, W, H, 0);
     Image out_hdr10 = MakeImage(vk, memory_properties, VK_FORMAT_A2B10G10R10_UNORM_PACK32, W, H, 0);
     Image out_scrgb = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT, W, H, 0);
     // One upload buffer per source (the GPU reads them at execution: a shared one would carry
     // the last fill into every image), and one for the readback.
-    std::array<Buffer, 3> uploads{MakeBuffer(vk, memory_properties, W * H * 16),
+    std::array<Buffer, 4> uploads{MakeBuffer(vk, memory_properties, W * H * 16),
+                                  MakeBuffer(vk, memory_properties, W * H * 16),
                                   MakeBuffer(vk, memory_properties, W * H * 16),
                                   MakeBuffer(vk, memory_properties, W * H * 16)};
     Buffer read = MakeBuffer(vk, memory_properties, W * H * 16);
 
-    const VkDescriptorSetLayoutBinding bindings[3]{
+    const VkDescriptorSetLayoutBinding bindings[4]{
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
     const VkDescriptorSetLayoutCreateInfo set_info{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 3,
+        .bindingCount = 4,
         .pBindings = bindings};
     VkDescriptorSetLayout set_layout{};
     CHECK(vkCreateDescriptorSetLayout(vk.device, &set_info, nullptr, &set_layout));
-    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 * 8};
+    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 * 8};
     const VkDescriptorPoolCreateInfo pool_create{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
@@ -401,6 +408,15 @@ int main() {
             texel[p * 4 + 3] = Half(p == 5 ? a5 : a_else);
         }
     };
+    const auto fill16_rgb = [&](Buffer& buffer, float r, float g, float b) {
+        auto* texel = static_cast<u16*>(buffer.mapped);
+        for (u32 p = 0; p < W; ++p) {
+            texel[p * 4 + 0] = Half(r);
+            texel[p * 4 + 1] = Half(g);
+            texel[p * 4 + 2] = Half(b);
+            texel[p * 4 + 3] = Half(1.0f);
+        }
+    };
     const auto fill8 = [&](Buffer& buffer, float a6) {
         auto* texel = static_cast<u8*>(buffer.mapped);
         for (u32 p = 0; p < W; ++p) {
@@ -419,10 +435,11 @@ int main() {
             .descriptorSetCount = 1,
             .pSetLayouts = &set_layout};
         CHECK(vkAllocateDescriptorSets(vk.device, &set_allocate, &set));
-        const VkDescriptorImageInfo infos[3]{{sampler, game.view, VK_IMAGE_LAYOUT_GENERAL},
+        const VkDescriptorImageInfo infos[4]{{sampler, game.view, VK_IMAGE_LAYOUT_GENERAL},
                                              {sampler, overlay.view, VK_IMAGE_LAYOUT_GENERAL},
-                                             {sampler, snapshot.view, VK_IMAGE_LAYOUT_GENERAL}};
-        VkWriteDescriptorSet writes[3]{
+                                             {sampler, snapshot.view, VK_IMAGE_LAYOUT_GENERAL},
+                                             {sampler, excess.view, VK_IMAGE_LAYOUT_GENERAL}};
+        VkWriteDescriptorSet writes[4]{
             {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = 0,
              .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
              .pImageInfo = &infos[0]},
@@ -431,8 +448,11 @@ int main() {
              .pImageInfo = &infos[1]},
             {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = 2,
              .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-             .pImageInfo = &infos[2]}};
-        vkUpdateDescriptorSets(vk.device, 3, writes, 0, nullptr);
+             .pImageInfo = &infos[2]},
+            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = 3,
+             .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .pImageInfo = &infos[3]}};
+        vkUpdateDescriptorSets(vk.device, 4, writes, 0, nullptr);
 
         CHECK(vkResetCommandBuffer(vk.cmd, 0));
         const VkCommandBufferBeginInfo begin{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -444,6 +464,7 @@ int main() {
         general(game.image);
         general(overlay.image);
         general(snapshot.image);
+        general(excess.image);
         const VkBufferImageCopy copy{.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                                      .imageExtent = {W, H, 1}};
         fill16(uploads[0], values, 0.0f, 1.0f);
@@ -452,6 +473,8 @@ int main() {
         vkCmdCopyBufferToImage(vk.cmd, uploads[1].buffer, overlay.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
         fill16(uploads[2], values, 1.0f, 0.0f); // the HUD's mask at column 5
         vkCmdCopyBufferToImage(vk.cmd, uploads[2].buffer, snapshot.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        fill16_rgb(uploads[3], 2.0f, 0.5f, 0.7f); // the chain's frame above white
+        vkCmdCopyBufferToImage(vk.cmd, uploads[3].buffer, excess.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
         Barrier(vk.cmd, out.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
@@ -525,26 +548,28 @@ int main() {
     };
 
     const auto settings = [&](u32 flags, float boost, float black_floor, float ui_white,
-                              u32 content_w = W, u32 content_h = H) {
+                              u32 content_w = W, u32 content_h = H, float exposure = 1.0f,
+                              float contrast = 1.0f, float highlights = 1.0f, float shadows = 1.0f,
+                              float saturation = 1.0f) {
         // The menu layer is always uploaded (white at its pixel): its flag is on throughout.
         return HdrPush{paper, peak, boost, flags | FlagOverlay, black_floor, ui_white,
-                       1.0f, 1.0f, 1.0f, 1.0f, 1.0f, content_w, content_h};
+                       exposure, contrast, highlights, shadows, saturation, content_w, content_h};
     };
     // Expand, boost 0 (the SDR picture at paper white).
     run(hdr10_pipeline, out_hdr10, settings(0, 0.0f, 0.0f, 1.0f),
-        {pq(0), pq(decode(0.5f) * paper), pq(decode(1.0f) * paper), pq(decode(0.7f) * paper),
+        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(decode(1.0f) * paper), pq(decode(0.7f) * paper),
          pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq(paper),
          pq(decode(0.9f) * paper)});
     // Expand, boost 1 (the white reaches the peak; below the knee the game's picture stands).
     // Above the knee the brightest pixels run to the peak and clamp there; the menu's own pixel
     // stays at paper white.
     run(hdr10_pipeline, out_hdr10, settings(0, 1.0f, 0.0f, 1.0f),
-        {pq(0), pq(decode(0.5f) * paper), pq(peak), pq(decode(0.7f) * paper), 1.0f,
+        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(peak), pq(decode(0.7f) * paper), 1.0f,
          pq(decode(0.5f) * paper), pq(paper), pq(decode(0.9f) * paper)});
     // Native+: nothing expanded — 2.0 decodes above the game's white; the menu forces paper
     // white at its pixel.
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 1.0f, 0.0f, 1.0f),
-        {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
+        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
          pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.9f) * paper)});
     // Native+ with the black floor. Column 4 (2.0) is the case that proves the clamp's place: the
     // floor lifts it to 4.9942 linear, above peak/paper = 4.9261, so it is clipped to exactly the
@@ -564,16 +589,16 @@ int main() {
     // Native+ with the HUD mask: column 5 is UI, shown at UI Brightness (1.5x paper white). The
     // menu layer is UI too, so its own pixel is composed at the same 1.5x and not at paper white.
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16 | FlagUiMask, 0.0f, 0.0f, 1.5f),
-        {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
+        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
          pq(decode(2.0f) * paper), pq(decode(0.5f) * 1.5f * paper), pq(1.5f * paper),
          pq(decode(0.9f) * paper)});
     // scRGB: linear values as they are (80 nits = 1.0).
     run(scrgb_pipeline, out_scrgb, settings(FlagNative16 | FlagScRgb, 0.0f, 0.0f, 1.0f),
-        {0.0f, decode(0.5f), 1.0f, decode(0.7f), decode(2.0f), decode(0.5f), 1.0f, decode(0.9f)});
+        {decode(0.3f), decode(0.5f), 1.0f, decode(0.7f), decode(2.0f), decode(0.5f), 1.0f, decode(0.9f)});
     // Native+ letterboxed: a 6x1 frame inside the 8x1 surface, so columns 1..6 are the picture and
-    // 0 and 7 are bars. The bars must be exactly black even though the game image holds values
-    // there (0.0 and 0.9): that is the guard for the rect the present computes from the content
-    // size. Column 6 is the menu's own pixel and is inside, so it still reads paper white.
+    // 0 and 7 are bars. The bars must be exactly black even though the game image holds values there
+    // (0.3 and 0.9) — with a non-zero value under each bar, a rect shifted either way fails here.
+    // Column 6 is the menu's own pixel and is inside, so it still reads paper white.
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 0.0f, 0.0f, 1.0f, 6, 1),
         {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
          pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(0)});
@@ -581,8 +606,26 @@ int main() {
     // (8 - 7) / 2 = 0, so the one bar column is on the right — the float window this replaced would
     // have put it on the left instead, which is why this case exists.
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 0.0f, 0.0f, 1.0f, 7, 1),
-        {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
+        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
          pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(0)});
+
+    // Native+ with the chain's excess (the whole-frame transport): the present takes the larger of
+    // the frame and the chain per channel. The chain is (2.0, 0.5, 0.7) and the frame is the
+    // standard ramp, so both directions are exercised — at column 3 the frame's 0.7 beats the
+    // chain's 0.5 in green, while the chain's 0.7 beats it in blue. The old single-height form
+    // scaled every channel by the brightest one's ratio (4x here) and would read 932.74 nits in
+    // blue instead of 106.4, and a shader that skipped the lift entirely would read 65.98.
+    run(hdr10_pipeline, out_hdr10, settings(FlagNative16 | FlagExcess, 0.0f, 0.0f, 1.0f),
+        {pq(0.503137f * paper), pq(0.503137f * paper), pq(1.058955f * paper),
+         pq(0.524074f * paper), pq(4.594793f * paper), pq(0.503137f * paper), pq(paper),
+         pq(0.855471f * paper)});
+    // Native+ user grading: contrast 2 about the 0.18 grey, highlights 2, shadows 0.5. Swapping the
+    // two by-luminance sliders moves columns 1, 3 and 7 by tens of codes, so this is the case that
+    // catches a swapped or mis-scaled slider (the identity cases cannot).
+    run(hdr10_pipeline, out_hdr10,
+        settings(FlagNative16, 0.0f, 0.0f, 1.0f, W, H, 1.0f, 2.0f, 2.0f, 0.5f, 1.0f),
+        {pq(0), pq(35.990f), pq(738.920f), pq(235.099f), pq(3657.892f), pq(35.990f),
+         pq(paper), pq(570.925f)});
 
     std::printf("HDR output: PASS\n");
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);
@@ -591,7 +634,7 @@ int main() {
     vkDestroyDescriptorSetLayout(vk.device, set_layout, nullptr);
     vkDestroyDescriptorPool(vk.device, pool, nullptr);
     vkDestroySampler(vk.device, sampler, nullptr);
-    for (const Image* image : {&game, &overlay, &snapshot, &out_hdr10, &out_scrgb}) {
+    for (const Image* image : {&game, &overlay, &snapshot, &excess, &out_hdr10, &out_scrgb}) {
         Destroy(vk, *image);
     }
     for (const Buffer* buffer : {&uploads[0], &uploads[1], &uploads[2], &read}) {

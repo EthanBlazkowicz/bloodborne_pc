@@ -59,6 +59,7 @@ extern char** environ;
 #include "render/vk_draw_prep.h"
 #include "shader/backend/spirv/emit_spirv.h"
 #include "shader/info.h"
+#include "shader/native/tone_curve.h"
 #include "shader/runtime_info.h"
 #include "upscale/motion_history.h"
 #include "vulkan/instance.h"
@@ -430,19 +431,32 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         info.AddBindings(binding);
     } else {
         perm_idx = modules.size();
+        // The module must have the shape the program — and the meta saved below — declares, or
+        // UsesToneCurve() describes a different shader than the pipeline runs: an extended module
+        // under a clear flag runs the extension and the delta on top of it. That shape is reachable
+        // without a mixed cache: an imported or rebuilt recipe is always flag 0, and a permutation
+        // the recipe lacks is translated here. So a program whose flag is clear translates this
+        // permutation with the extension forced off, using the same thread-local override the
+        // shader lab uses. Restored on every exit, including a throw out of the compiler.
+        struct ToneCurveShape {
+            int saved{Shader::Native::tone_curve_lab_override};
+            explicit ToneCurveShape(bool extend) {
+                Shader::Native::tone_curve_lab_override = extend ? -1 : 0;
+            }
+            ~ToneCurveShape() {
+                Shader::Native::tone_curve_lab_override = saved;
+            }
+        } shape{info.uses_tone_curve};
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
         const auto module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
-        // The live translation decides the tone curve again. It cannot disagree in a consistent
-        // session — translation is deterministic per code, and LoadShaderMeta refuses a program
-        // extended under a session with the extension off — so a difference here means the lab's
-        // thread-local override (shader/native/tone_curve.h) raced the preload thread. The
-        // program's flag is shared by every module it already holds and UsesToneCurve() reads it
-        // live, so correcting it here would change the shape of pipelines that were built against
-        // the old value; say so instead, and leave the decision the program was built with.
+        // With the override in place this cannot differ unless the setting changed mid-session
+        // (both are read once). Say so if it ever does: the program's flag is shared by every
+        // module it holds, so correcting it here would change pipelines that were built against
+        // the old value.
         if (new_info.uses_tone_curve != info.uses_tone_curve) {
             LOG_WARNING(Render_Vulkan,
                         "Program {:x}: a new permutation decided the tone curve {}, the program {}; "
-                        "keeping the program's (the lab override changed mid-session?)",
+                        "keeping the program's (was the setting changed mid-session?)",
                         info.pgm_hash, new_info.uses_tone_curve ? "on" : "off",
                         info.uses_tone_curve ? "on" : "off");
         }
