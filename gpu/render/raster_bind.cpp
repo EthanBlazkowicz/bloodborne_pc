@@ -10,6 +10,8 @@
 #include "render/raster_internal.h"
 #include "upscale/motion_history.h"
 
+#include <cmath>
+
 namespace Vulkan {
 
 namespace {
@@ -377,8 +379,15 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
         const auto& bb = BbSettings::Get();
         const float paper = std::clamp(bb.hdr_paper_white.load(std::memory_order_relaxed),
                                        BbSettings::HdrPaperWhiteMin, BbSettings::HdrPaperWhiteMax);
-        push_data.tone_curve = {HdrChannel::Knee(),
-                                HdrChannel::PeakNits() / std::max(paper, 1.0f), 1.0f, 1.0f};
+        // The extension's domain is the chain's: gamma 2.2 encoded, the game's own output. Its
+        // target is therefore the encoded form of the linear peak, (peak/paper)^(1/2.2) — with the
+        // linear ratio the curve reached encoded 3.89 (4034 nits at paper 203, peak 790), so the
+        // present's peak clamp landed in the middle of the roll-off and every above-white pixel
+        // clipped to the peak. See HdrChannel::ChainEncodeGamma.
+        const float peak_linear = HdrChannel::PeakNits() / std::max(paper, 1.0f);
+        const float peak_encoded = std::pow(std::max(peak_linear, 1.0f),
+                                            1.0f / HdrChannel::ChainEncodeGamma);
+        push_data.tone_curve = {HdrChannel::Knee(), peak_encoded, 1.0f, 1.0f};
     }
     if (!HelperEligible(pipeline)) {
         ++helper_serial;

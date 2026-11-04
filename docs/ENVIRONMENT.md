@@ -7,7 +7,7 @@ at its start (`Environment:` in the log) and warns about `BB_*` names it does no
 `=1: ...` / `=0: ...` / `=N: ...` say what that value does; `set: ...` means any value
 turns it on (even `0`).
 
-## Settings (85)
+## Settings (111)
 
 What players and the launchers set. The menu, bbport.ini and the launcher write most of them; set one by hand to override them.
 
@@ -49,6 +49,32 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_GPU_ID` | =N: the GPU to use, by Vulkan index (the launcher's) |
 | `BB_GPU_PROFILE` | =1: GPU profiler: time per labelled pass in the log (the launcher's) |
 | `BB_HDR` | =1: HDR output allowed |
+| `BB_HDR_BLACK_FLOOR` | =0..2 (0): native+'s black floor, in nits of the game's white |
+| `BB_HDR_BLOOM` | =0..100 (50): native+'s glow strength (50 is the game's) |
+| `BB_HDR_BOOST` | =0..1 (0.25): expand mode's highlight boost |
+| `BB_HDR_CHAIN` | =0: no 16-bit chain images (diagnostic; the scene stays 8-bit) |
+| `BB_HDR_CHAIN_IMAGE` | =1: the chain's targets get float images of the port's own (diagnostic) |
+| `BB_HDR_CONTRAST` | =0..2 (1): native+'s user grading, contrast |
+| `BB_HDR_DEBUG` | =1: the HDR encode as a heat map of the gain |
+| `BB_HDR_DELTA` | =0: no HDR delta pass after the composite (diagnostic) |
+| `BB_HDR_DUMP` | =0..100: dump this many presented frames (written into the data folder) |
+| `BB_HDR_EXPOSURE` | =0..2 (1): native+'s user grading, exposure |
+| `BB_HDR_GLOW` | =0: the chain's glow add off (diagnostic) |
+| `BB_HDR_HIGHLIGHTS` | =0..2 (1): native+'s user grading, highlights |
+| `BB_HDR_KNEE` | =0.10..0.95 (0.6): native+'s highlight range (below it the game's curve) |
+| `BB_HDR_LUT_BRIDGE` | =exact / renodx: how the colour table's out-of-range colours are brought in |
+| `BB_HDR_MODE` | =native+ / expand: the HDR source (native+ is the scene chain) |
+| `BB_HDR_NOGRADE` | =1: the chain's colour matrix off (diagnostic) |
+| `BB_HDR_PAPER_WHITE` | =80..500 (203): nits of the game's white on the HDR display |
+| `BB_HDR_PEAK` | =100..4000 (1000): the display's peak, in nits (turns peak-auto off) |
+| `BB_HDR_PROBE` | =1..5: a chain pass draws itself in colour |
+| `BB_HDR_SATURATION` | =0..2 (1): native+'s user grading, saturation |
+| `BB_HDR_SCENE_CURVE` | =1: extend the game's own composite tone curve above its knee (native+); the delta pass stands down |
+| `BB_HDR_SCENE_GRADING` | =0..100 (100): the colour table's strength, in % |
+| `BB_HDR_SHADOWS` | =0..2 (1): native+'s user grading, shadows |
+| `BB_HDR_SWAP` | =0..15: the chain's channel-order test (diagnostic) |
+| `BB_HDR_TRACE` | =1: log the 16-bit chain's accesses for one frame |
+| `BB_HDR_UI_NITS` | =48..500 (203): native+'s UI Brightness, in nits |
 | `BB_HUD_ANCHOR` | =0: on wide screens the HUD stays in the 16:9 middle |
 | `BB_INTEL_TONEMAP_FIX` | =0 / 1: Intel CPU tone mapping fix patch off / on (default on on Intel) |
 | `BB_JITTER` | =0 / 1: upscaler camera jitter (the menu's) |

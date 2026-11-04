@@ -13,6 +13,7 @@
 #include "render/gcn_to_vk.h"
 #include "render/hdr_channel.h"
 #include "render/raster_internal.h"
+#include "shader/native/tone_curve.h"
 #include <vk_mem_alloc.h>
 
 namespace Vulkan {
@@ -842,8 +843,15 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     // specialization constant), the game's values go back after. The peak is the display's (or
     // the menu's); the grading sliders' neutrals stand in for the RenoDX grading, which comes
     // with the menu work.
+    //
+    // Not drawn when the game's own curve is extended (BB_HDR_SCENE_CURVE=1): that pass is the
+    // HDR source itself, and this one adds `HDR - SDR` on top of what it wrote, so both together
+    // counted the same light twice — the frame was never the extended curve alone, and the panel
+    // number that looked right was the two of them. One mechanism at a time.
+    static const bool scene_curve = Shader::Native::ToneCurveEnabled();
     if (const vk::Pipeline hdr_handle = pipeline->HdrHandle();
-        hdr_handle && BbSettings::Get().hdr_delta.load(std::memory_order_relaxed) != 0) {
+        hdr_handle && !scene_curve &&
+        BbSettings::Get().hdr_delta.load(std::memory_order_relaxed) != 0) {
         const auto bits = [](float f) { return std::bit_cast<u32>(f) + 1u; };
         const float paper =
             std::clamp(BbSettings::Get().hdr_paper_white.load(std::memory_order_relaxed),

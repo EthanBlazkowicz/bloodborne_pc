@@ -74,6 +74,13 @@ public:
     /// copy's output is linear (encoded by the attachment), UNORM when it is already encoded.
     static vk::Format DisplayAttachmentFormat();
     static constexpr vk::Format Native16Format = vk::Format::eR16G16B16A16Sfloat;
+    /// The chain's frames are gamma 2.2 encoded (the game's SDR output; render/shaders/
+    /// hdr_output.frag decodes with 2.2 and hdr/upscale_transfer.glsl round trips through it). The
+    /// tone curve extension works in that domain, so the peak it aims at is
+    /// (peak / paper white)^(1/2.2), not the linear ratio — handing it the linear ratio made the
+    /// chain reach encoded 3.89 = 4034 nits at paper 203/peak 790, and the present's clamp then cut
+    /// the whole roll-off.
+    static constexpr float ChainEncodeGamma = 2.2f;
     /// The game's ColorGrading pass (a color table), replaced in the chain; its strength goes
     /// to the shader in bb_hdr.w (shaders/hdr/bb_color_grading.frag).
     static constexpr u64 ColorGradingHash = 0xed4c7668;

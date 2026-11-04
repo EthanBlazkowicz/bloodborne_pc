@@ -298,10 +298,17 @@ void Swapchain::ApplyHdrMetadata() {
     // The picture is the SDR frame: BT.709 primaries, D65 white, up to the peak set. MaxCLL is
     // what the HDR mode can reach (render/presenter.cpp): with expand's lower ceiling the
     // display has no reason to compress the highlights itself.
+    // The primaries are the container's, not 709's: an ST 2084 swapchain is BT.2020 (the encode
+    // converts to it, shaders/hdr_output.frag), so declaring 709 there told the display the wrong
+    // gamut and it remapped the colour. scRGB is linear BT.709 in FP16, which 709 describes.
+    const bool bt2020 = hdr_format.colorSpace == vk::ColorSpaceKHR::eHdr10St2084EXT;
     const vk::HdrMetadataEXT metadata{
-        .displayPrimaryRed = {0.640f, 0.330f},
-        .displayPrimaryGreen = {0.300f, 0.600f},
-        .displayPrimaryBlue = {0.150f, 0.060f},
+        .displayPrimaryRed = bt2020 ? vk::XYColorEXT{0.708f, 0.292f}
+                                    : vk::XYColorEXT{0.640f, 0.330f},
+        .displayPrimaryGreen = bt2020 ? vk::XYColorEXT{0.170f, 0.797f}
+                                      : vk::XYColorEXT{0.300f, 0.600f},
+        .displayPrimaryBlue = bt2020 ? vk::XYColorEXT{0.131f, 0.046f}
+                                     : vk::XYColorEXT{0.150f, 0.060f},
         .whitePoint = {0.3127f, 0.3290f},
         .minLuminance = 0.0f,
         .maxLuminance = hdr_max_nits,
