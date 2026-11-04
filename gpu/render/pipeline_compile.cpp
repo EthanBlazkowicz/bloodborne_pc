@@ -421,7 +421,9 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
             // extension emits are inside the range (pipeline.cpp: push_size = sizeof(PushData)).
             std::printf("HDR tone curve: extending %08x\n", u32(info.pgm_hash));
             // The result is what GraphicsPipeline::UsesToneCurve gates the delta pass on, so a
-            // composite the pass refuses is not reported as extended (and keeps its delta).
+            // composite the pass refuses is not reported as extended (and keeps its delta). It is
+            // also the pipeline key's input: see LoadShaderMeta's refusal of a cached program whose
+            // decision disagrees with this session's setting.
             const bool extended = Shader::Native::ExtendToneCurve(ir_program);
             std::printf("HDR tone curve: %s %08x, emitting\n",
                         extended ? "extended" : "not extended", u32(info.pgm_hash));

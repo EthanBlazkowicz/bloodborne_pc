@@ -20,6 +20,7 @@
 #include "render/pipeline_cache.h"
 #include "render/pipeline_store.h"
 #include "shader/info.h"
+#include "shader/native/tone_curve.h"
 #include "shader/specialization.h"
 #include "vulkan/instance.h"
 
@@ -76,6 +77,21 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     reader.Read(motion_positions);
     spec.Deserialize(ar);
     if (!info.Deserialize(ar)) {
+        return false;
+    }
+    // The decision travels with the program (this session's setting decides every translation), so
+    // a cached or imported one that disagrees was built under the other setting: its SPIR-V has the
+    // opposite shape from the flag and running it would either extend the curve while the delta also
+    // runs, or extend nothing while the delta is suppressed. Refusing here is what keeps one
+    // decision per program on every path — including the live permutations that inherit it.
+    if (info.uses_tone_curve != Shader::Native::ToneCurveEnabled()) {
+        static u32 reported = 0;
+        if (reported++ < 3) {
+            LOG_WARNING(Render_Vulkan,
+                        "Cached program {:x} was built with the tone curve {} this session's setting; "
+                        "compiling it live",
+                        info.pgm_hash, info.uses_tone_curve ? "on, not off" : "off, not on");
+        }
         return false;
     }
     // A motion vertex shader embeds the object motion buffers' addresses: kept when this session

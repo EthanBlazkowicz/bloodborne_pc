@@ -507,22 +507,25 @@ int main() {
                 const auto* halves = static_cast<const u16*>(read.mapped);
                 got = FromHalf(halves[p * 4]) * 80.0f / paper;
             }
-            if (std::abs(got - expected[p]) > 0.004f) {
+            // 10-bit output quantisation is 1/1023 = 0.00098, so this leaves about half a code of slack: a
+            // model error of one code step fails, which is what a regression test is for.
+            if (std::abs(got - expected[p]) > 0.0015f) {
                 std::fprintf(stderr, "HDR output regression: case %u pixel %u: actual %.5f, "
                                      "expected %.5f\n",
                              case_index, p, got, expected[p]);
                 std::fflush(stderr);
             }
-            assert(std::abs(got - expected[p]) <= 0.004f);
+            assert(std::abs(got - expected[p]) <= 0.0015f);
         }
         std::printf("HDR output: case %u PASS\n", case_index);
         ++case_index;
     };
 
-    const auto settings = [&](u32 flags, float boost, float black_floor, float ui_white) {
+    const auto settings = [&](u32 flags, float boost, float black_floor, float ui_white,
+                              u32 content_w = W, u32 content_h = H) {
         // The menu layer is always uploaded (white at its pixel): its flag is on throughout.
         return HdrPush{paper, peak, boost, flags | FlagOverlay, black_floor, ui_white,
-                       1.0f, 1.0f, 1.0f, 1.0f, 1.0f, W, H};
+                       1.0f, 1.0f, 1.0f, 1.0f, 1.0f, content_w, content_h};
     };
     // Expand, boost 0 (the SDR picture at paper white).
     run(hdr10_pipeline, out_hdr10, settings(0, 0.0f, 0.0f, 1.0f),
@@ -540,10 +543,13 @@ int main() {
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 1.0f, 0.0f, 1.0f),
         {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
          pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.9f) * paper)});
-    // Native+ with the black floor.
+    // Native+ with the black floor. Column 4 (2.0) is the case that proves the clamp's place: the
+    // floor lifts it to 4.9942 linear, above peak/paper = 4.9261, so it is clipped to exactly the
+    // peak. Expecting the unclamped 1013.8 nits passed inside the old tolerance, which is why the
+    // tolerance is now 0.0015 (about one 10-bit code).
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 0.0f, 0.1f, 1.0f),
         {pq(0), pq((decode(0.5f) - 0.1f) / 0.9f * paper), pq(paper),
-         pq((decode(0.7f) - 0.1f) / 0.9f * paper), pq((decode(2.0f) - 0.1f) / 0.9f * paper),
+         pq((decode(0.7f) - 0.1f) / 0.9f * paper), pq(peak),
          pq((decode(0.5f) - 0.1f) / 0.9f * paper), pq(paper),
          pq((decode(0.9f) - 0.1f) / 0.9f * paper)});
     // Native+ with the HUD mask: column 5 is UI, shown at UI Brightness (1.5x paper white). The
@@ -555,6 +561,13 @@ int main() {
     // scRGB: linear values as they are (80 nits = 1.0).
     run(scrgb_pipeline, out_scrgb, settings(FlagNative16 | FlagScRgb, 0.0f, 0.0f, 1.0f),
         {0.0f, decode(0.5f), 1.0f, decode(0.7f), decode(2.0f), decode(0.5f), 1.0f, decode(0.9f)});
+    // Native+ letterboxed: a 6x1 frame inside the 8x1 surface, so columns 1..6 are the picture and
+    // 0 and 7 are bars. The bars must be exactly black even though the game image holds values
+    // there (0.0 and 0.9): that is the guard for the rect the present computes from the content
+    // size. Column 6 is the menu's own pixel and is inside, so it still reads paper white.
+    run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 0.0f, 0.0f, 1.0f, 6, 1),
+        {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
+         pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(0)});
 
     std::printf("HDR output: PASS\n");
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);
