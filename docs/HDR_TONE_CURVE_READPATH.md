@@ -46,6 +46,7 @@ the delta pipeline and `hdr_delta` — is **not** reached: the delta machinery i
 that has ever put light above white on the screen, and it must not be removed while the IR path
 cannot transport its output.
 
-Still to fix before any of this ships: the shader cache holds the extended composite, so
-`BB_HDR_SCENE_CURVE=0` cannot disable the feature until the cache is separated the way the reference
-does it (`cache_storage.cpp`).
+Fixed since: the shader cache held the extended composite, so `BB_HDR_SCENE_CURVE=0` could not
+disable the feature. The extended programs now live in their own subdirectory beside the usual ones
+(`render/blob_store.cpp`), so both settings work against the same cache directory without deleting
+anything.

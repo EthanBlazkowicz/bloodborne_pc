@@ -51,7 +51,8 @@ std::vector<ToneCurveMatch> FindToneCurves(const IR::Program& program);
 bool IsComposite(const std::vector<ToneCurveMatch>& matches);
 
 /// BB_HDR_SCENE_CURVE=1 (read once): composites are compiled with the extension. Shader caches
-/// then live beside the usual ones (cache_storage.cpp), so turning it on or off never mixes them.
+/// then live beside the usual ones (render/blob_store.cpp), so turning it on or off never mixes
+/// them — the extension is an IR rewrite, so a cached program cannot be re-derived from its key.
 bool ToneCurveEnabled();
 
 /// Extends a composite's curve in place (a fragment program in one block). Returns whether it
@@ -63,15 +64,19 @@ bool ExtendToneCurve(IR::Program& program);
 inline thread_local int tone_curve_lab_override = -1;
 inline thread_local std::vector<IR::Inst*>* tone_curve_lab_channels = nullptr;
 
-/// The extension's parameters, pushed after Shader::PushData by pipelines whose fragment shader
-/// uses them (Info::uses_tone_curve).
+/// The extension's parameters. They ride in Shader::PushData's `tone_curve` tail (resource.h:
+/// ToneCurveIndex / ToneCurveSpvIndex, offset 176), pushed with every draw of a native+ pipeline
+/// and read by a fragment shader whose curve was extended (Info::uses_tone_curve).
 struct ToneCurvePush {
-    float knee;     ///< the curve's output (0..1, SDR) where the extension starts
-    float peak;     ///< peak / paper white: the most a channel reaches (SDR white = 1)
+    float knee;     ///< the curve's output (0..1, SDR) where the extension starts (live)
+    float peak;     ///< peak / paper white: the most a channel reaches (SDR white = 1) (live)
     float strength; ///< share of the extension in log2 (0: the game's curve, 1: all of it)
     float enabled;  ///< 0: the game's curve everywhere (bit for bit)
 };
-inline constexpr u32 ToneCurvePushOffset = 128;
+// strength and enabled go out as 1 (render/raster_bind.cpp): there is no setting for either, and
+// the switch today is BB_HDR_SCENE_CURVE, which decides at translation time whether a composite is
+// extended at all. A runtime switch would be `enabled` from a setting; the extension would then
+// have to be compiled in unconditionally.
 inline constexpr u32 ToneCurveRollOff = 70; ///< percent of the stops to the peak kept linear
 
 } // namespace Shader::Native

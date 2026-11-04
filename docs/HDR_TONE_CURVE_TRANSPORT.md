@@ -94,6 +94,7 @@ end to end:
 3. then retire `bb_composite_hdr.frag`, `bb_tonemap_variants.h`, the delta pipeline and `hdr_delta`
    — the IR now does that job.
 
-Known gap to fix before this is shippable: the shader cache holds the extended composite, so
-`BB_HDR_SCENE_CURVE=0` cannot turn the feature off until the cache is separated the way the
-reference does it (`cache_storage.cpp` keeps extended shaders beside the usual ones).
+Closed since: the shader cache held the extended composite, so `BB_HDR_SCENE_CURVE=0` could not
+turn the feature off. Extended programs now live in their own subdirectory beside the usual ones
+(`render/blob_store.cpp`), since the extension is an IR rewrite and a cached entry cannot be
+re-derived from its key.

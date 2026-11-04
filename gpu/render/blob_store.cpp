@@ -10,6 +10,7 @@
 #include "common/logging/log.h"
 #include "common/path_util.h"
 #include "common/thread.h"
+#include "shader/native/tone_curve.h"
 
 namespace BbCache {
 
@@ -44,6 +45,14 @@ void BlobStore::Open() {
     }
     dir = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) /
           Common::ElfInfo::Instance().GameSerial();
+    // Native+ (shader/native/tone_curve.h): a composite compiled with its tone curve extended is a
+    // different program under the same hash — the extension is an IR rewrite, so a cached entry
+    // cannot be re-derived from the key. It gets a cache of its own beside the usual one, which is
+    // what makes BB_HDR_SCENE_CURVE=0 and =1 both work against the same cache directory without
+    // deleting anything (and why a mixed cache used to keep the extension on with the switch off).
+    if (Shader::Native::ToneCurveEnabled()) {
+        dir /= "tone-curve";
+    }
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     writer = std::jthread([this](std::stop_token stop) { Writer(stop); });

@@ -51,8 +51,10 @@ push-block fix, the extension running with `float target yes`, and the scene res
 machinery) stays deliberately undone, because that machinery remains the only path that has ever put
 light above white on this screen.
 
-Also still open: the shader cache holds the extended composite, so `BB_HDR_SCENE_CURVE=0` cannot
-disable the feature until the cache is separated the way the reference does it.
+The shader cache separation this document listed as open is done: the extended programs live in
+their own subdirectory beside the usual ones (`render/blob_store.cpp`), because the extension is an
+IR rewrite that a cache key cannot re-derive. `BB_HDR_SCENE_CURVE=0` and `=1` now both work against
+the same cache directory, cold or warm, with no deletion.
 
 ## Correction (2026-11-04): the excess image existed only on DLSS's path
 
