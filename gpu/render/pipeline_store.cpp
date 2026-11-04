@@ -75,7 +75,9 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     reader.Read(motion_params);
     reader.Read(motion_positions);
     spec.Deserialize(ar);
-    info.Deserialize(ar);
+    if (!info.Deserialize(ar)) {
+        return false;
+    }
     // A motion vertex shader embeds the object motion buffers' addresses: kept when this session
     // has them at the same addresses (vk_object_motion.cpp replays them).
     return !(info.hw_stage == Shader::HwStage::Vertex && spec.runtime_info.hw.vs.motion_vectors) ||
@@ -231,6 +233,24 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
         module = compile();
         it_pgm.value() = std::move(program);
     } else {
+        // One program, one tone curve decision: the pipeline reports UsesToneCurve() from the
+        // program's Info, and a permutation whose shader was rewritten (or not) differently would
+        // run the extension with the flag saying it had not — and the delta pass would be added on
+        // top of it. A program built with the setting on and one built with it off are two caches,
+        // so a difference here means an imported or mixed set: leave this permutation to compile
+        // live.
+        if (it_pgm.value()->info.uses_tone_curve != program->info.uses_tone_curve) {
+            static u32 reported = 0;
+            if (reported++ < 3) {
+                LOG_WARNING(Render_Vulkan,
+                            "Cached permutation {}_x{} disagrees with its program on the tone curve "
+                            "(extended {} vs {}), skipping preload",
+                            program->info.pgm_hash, perm_idx,
+                            program->info.uses_tone_curve ? "yes" : "no",
+                            it_pgm.value()->info.uses_tone_curve ? "yes" : "no");
+            }
+            return false;
+        }
         auto& modules = it_pgm.value()->modules;
         const auto it = std::ranges::find(modules, spec, &Program::Module::spec);
         if (it == modules.end()) {
@@ -278,6 +298,14 @@ std::optional<size_t> PipelineCache::AdoptImportedPermutation(std::vector<u8>&& 
     }
     Program& program = *it.value();
     auto& modules = program.modules;
+    // One program, one tone curve decision. An imported permutation built with the setting on (or
+    // off) is not this program's shape: adopted, the program's flag would end up describing a
+    // module it no longer matches — an extended shader with the flag clear runs the extension and
+    // the delta on top of it. The two settings write separate caches, so this only happens across
+    // imports.
+    if (info.uses_tone_curve != program.info.uses_tone_curve) {
+        return std::nullopt;
+    }
     if (const auto found = std::ranges::find(modules, spec, &Program::Module::spec);
         found != modules.end()) {
         return size_t(std::distance(modules.begin(), found));

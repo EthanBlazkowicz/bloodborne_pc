@@ -257,6 +257,9 @@ int main() {
         u32 flags;
         float black_floor, ui_white;
         float exposure, contrast, highlights, shadows, saturation;
+        // The frame's size inside the swapchain (hdr_output.frag's FrameSize): what is outside it
+        // is the letterbox. This test draws 1:1 (W x H), so the whole surface is the frame.
+        u32 content_width, content_height;
     };
     constexpr u32 FlagScRgb = 1u, FlagOverlay = 2u, FlagNative16 = 16u, FlagUiMask = 32u;
 
@@ -302,7 +305,7 @@ int main() {
         .pPoolSizes = &pool_size};
     VkDescriptorPool pool{};
     CHECK(vkCreateDescriptorPool(vk.device, &pool_create, nullptr, &pool));
-    const VkPushConstantRange push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 11 * 4};
+    const VkPushConstantRange push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 13 * 4};
     const VkPipelineLayoutCreateInfo layout_info{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
@@ -519,7 +522,7 @@ int main() {
     const auto settings = [&](u32 flags, float boost, float black_floor, float ui_white) {
         // The menu layer is always uploaded (white at its pixel): its flag is on throughout.
         return HdrPush{paper, peak, boost, flags | FlagOverlay, black_floor, ui_white,
-                       1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+                       1.0f, 1.0f, 1.0f, 1.0f, 1.0f, W, H};
     };
     // Expand, boost 0 (the SDR picture at paper white).
     run(hdr10_pipeline, out_hdr10, settings(0, 0.0f, 0.0f, 1.0f),
@@ -543,10 +546,11 @@ int main() {
          pq((decode(0.7f) - 0.1f) / 0.9f * paper), pq((decode(2.0f) - 0.1f) / 0.9f * paper),
          pq((decode(0.5f) - 0.1f) / 0.9f * paper), pq(paper),
          pq((decode(0.9f) - 0.1f) / 0.9f * paper)});
-    // Native+ with the HUD mask: column 5 is UI, shown at UI Brightness (1.5x paper white).
+    // Native+ with the HUD mask: column 5 is UI, shown at UI Brightness (1.5x paper white). The
+    // menu layer is UI too, so its own pixel is composed at the same 1.5x and not at paper white.
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16 | FlagUiMask, 0.0f, 0.0f, 1.5f),
         {pq(0), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
-         pq(decode(2.0f) * paper), pq(decode(0.5f) * 1.5f * paper), pq(paper),
+         pq(decode(2.0f) * paper), pq(decode(0.5f) * 1.5f * paper), pq(1.5f * paper),
          pq(decode(0.9f) * paper)});
     // scRGB: linear values as they are (80 nits = 1.0).
     run(scrgb_pipeline, out_scrgb, settings(FlagNative16 | FlagScRgb, 0.0f, 0.0f, 1.0f),

@@ -425,6 +425,12 @@ std::optional<MetaTarget> ReadMetaTarget(const std::vector<u8>& bytes) {
     }
     const size_t header = version == 7 ? 24 : 40;
     t.body.assign(bytes.begin() + header, bytes.end());
+    if (version == 7) {
+        // A v7 body predates the tone curve flag that Info::Serialize now appends: give the reader
+        // the four zero bytes it expects. Zero is also the right value — no v7 build could have
+        // extended the curve — and appending it keeps one deserializer for both versions.
+        t.body.resize(t.body.size() + sizeof(u32), 0);
+    }
     t.info = std::make_unique<Shader::Info>();
     try {
         Serialization::Archive ar{std::vector<u8>(t.body)};
