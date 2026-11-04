@@ -21,6 +21,10 @@ param(
     [float]$Peak = 790,
     [float]$PaperWhite = 203,
     [float]$Knee = 0.6,
+    # The build's output folder: its bb-probe.exe replaces the release's in bin\. The released
+    # launcher starts that binary, so a stock package plus this file is the harness for this branch
+    # (the distributed 0.7 binary predates it).
+    [string]$Overlay = 'D:\Code\bloodborne_pc\out\win-native',
     [switch]$Mirror,
     [switch]$DryRun
 )
@@ -71,6 +75,15 @@ Write-Output ''
 Write-Output 'bbport.ini:'
 Write-Output $ini
 
+# The branch's own engine: the released launcher runs bin\bb-probe.exe, and the 0.7 package's copy
+# is not this branch. Without this the harness measures the released code, not ours.
+$engine = Join-Path $Overlay 'bb-probe.exe'
+if (Test-Path -LiteralPath $engine) {
+    Write-Output "engine     $engine -> $DataRoot\bin\bb-probe.exe"
+} else {
+    Write-Warning "no built engine at $engine (build it first: cmake -S gpu -B out/win-native -G Ninja -DBB_NET=OFF; ninja -C out/win-native bb-probe)"
+}
+
 if ($DryRun) {
     Write-Output '-DryRun: nothing copied, nothing written, the game not started.'
     exit 0
@@ -93,6 +106,16 @@ if (Test-Path -LiteralPath $SaveFrom) {
 } else {
     Write-Warning "no save at ${SaveFrom}: the harness starts without one"
 }
+
+# The branch's own engine over the package's. Refused rather than skipped: a harness that quietly
+# runs the released binary would measure code that is not under test.
+if (-not (Test-Path -LiteralPath $engine)) {
+    throw "no built engine at $engine - build it first:" +
+          " cmake -S gpu -B out/win-native -G Ninja -DBB_NET=OFF && ninja -C out/win-native bb-probe"
+}
+$target = Join-Path $DataRoot 'bin\bb-probe.exe'
+Copy-Item -LiteralPath $engine -Destination $target -Force
+Write-Output "engine replaced: $target"
 
 # The ini last, so a run can never see a half-written one.
 [System.IO.File]::WriteAllText((Join-Path $DataRoot 'bbport.ini'), $ini,
