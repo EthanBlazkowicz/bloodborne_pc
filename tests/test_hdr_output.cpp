@@ -712,6 +712,18 @@ int main() {
          pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq((0.5f * decode(2.0f) + 0.5f) * paper),
          pq(decode(0.9f) * paper)}, /*mask_column=*/4, /*menu_alpha=*/0.5f);
 
+    // Native+ with the peak BELOW paper white (200 on 203): peak/paper is clamped up to 1.0, so the
+    // whole native+ path becomes a paper-white cap and every value above 1.0 lands on 203 nits -
+    // column 4's 2.0 included, where the normal case reads 932.74. This is the only case that
+    // exercises that clamp-up.
+    {
+        HdrPush low_peak = settings(FlagNative16, 0.0f, 0.0f, 1.0f);
+        low_peak.peak = 200.0f;
+        run(hdr10_pipeline, out_hdr10, low_peak,
+            {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
+             pq(paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.9f) * paper)});
+    }
+
     std::printf("HDR output: PASS\n");
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);
     vkDestroyPipeline(vk.device, scrgb_pipeline, nullptr);
