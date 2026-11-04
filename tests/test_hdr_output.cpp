@@ -428,7 +428,8 @@ int main() {
 
     u32 case_index = 0;
     const auto run = [&](VkPipeline pipeline, const Image& out, const HdrPush& push,
-                         const std::array<float, W>& expected, u32 mask_column = 4) {
+                         const std::array<float, W>& expected, u32 mask_column = 4,
+                         float menu_alpha = 1.0f) {
         VkDescriptorSet set{};
         const VkDescriptorSetAllocateInfo set_allocate{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -470,7 +471,7 @@ int main() {
                                      .imageExtent = {W, H, 1}};
         fill16(uploads[0], values, 0.0f, 1.0f);
         vkCmdCopyBufferToImage(vk.cmd, uploads[0].buffer, game.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
-        fill8(uploads[1], 1.0f); // the menu: white at column 6
+        fill8(uploads[1], menu_alpha); // the menu: white at column 6
         vkCmdCopyBufferToImage(vk.cmd, uploads[1].buffer, overlay.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
         fill16(uploads[2], values, 1.0f, 0.0f, mask_column); // the HUD's mask, at the case's column
         vkCmdCopyBufferToImage(vk.cmd, uploads[2].buffer, snapshot.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
@@ -701,6 +702,15 @@ int main() {
     run(hdr10_pipeline, out_hdr10, settings(FlagNative16 | 8u, 0.0f, 0.0f, 1.0f),
         {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(0.5f * paper),
          pq(0.5f * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.9f) * paper)});
+
+    // The menu at half opacity: the layer is straight alpha (the ImGui backend blends
+    // SRC_ALPHA/ONE_MINUS_SRC_ALPHA and the port writes real alphas), so the pixel is the frame and
+    // the menu averaged. A shader that scaled alpha (the old x4) would make it fully opaque - 203
+    // nits instead of 568 - which is the fade that popped.
+    run(hdr10_pipeline, out_hdr10, settings(FlagNative16, 0.0f, 0.0f, 1.0f), 
+        {pq(decode(0.3f) * paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.7f) * paper),
+         pq(decode(2.0f) * paper), pq(decode(0.5f) * paper), pq((0.5f * decode(2.0f) + 0.5f) * paper),
+         pq(decode(0.9f) * paper)}, /*mask_column=*/4, /*menu_alpha=*/0.5f);
 
     std::printf("HDR output: PASS\n");
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);

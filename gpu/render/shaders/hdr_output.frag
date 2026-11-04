@@ -13,7 +13,7 @@
 layout(location = 0) out vec4 color;
 
 layout(binding = 0) uniform sampler2D game;     // the letterboxed SDR frame, swapchain-sized
-layout(binding = 1) uniform sampler2D overlay;  // the menu layer (FLAG_OVERLAY)
+layout(binding = 1) uniform sampler2D overlay;  // the menu layer, straight alpha (FLAG_OVERLAY)
 layout(binding = 2) uniform sampler2D snapshot; // the frame before the UI (FLAG_UI_MASK)
 // Native+: what the chain made above the game's white, per output pixel.
 layout(binding = 3) uniform sampler2D excess;
@@ -292,7 +292,7 @@ void main() {
             // never expanded — 1.0 of it is ui_nits, not paper white. Neutral (ui_white 1) leaves
             // it exactly as before.
             vec3 menu_linear = SdrToLinear(clamp(menu.rgb, 0.0, 1.0)) * max(hdr.ui_white, 0.0);
-            linear = mix(under, menu_linear, clamp(menu.a * 4.0, 0.0, 1.0));
+            linear = mix(under, menu_linear, clamp(menu.a, 0.0, 1.0));
         }
     }
     // The peak is the frame's ceiling and the metadata's MaxCLL, but the user's exposure/contrast
