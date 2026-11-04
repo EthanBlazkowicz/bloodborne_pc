@@ -905,15 +905,19 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     const float expand_white = std::max(1.0f + (peak / paper_white - 1.0f) * boost, 1.0f);
     // MaxLuminance is the display's peak; MaxCLL the brightest content. In native+ the chain
     // already extends the scene above the game's white, so the content can reach the display's
-    // peak itself — an SDR-derived 203 made HDR analysis tools report the content as 203. The one
-    // thing that may exceed it is UI white (hdr_ui_nits above hdr_peak), which the present allows
-    // and the metadata has to declare, or the display would tone-map the HUD down.
-    const float ui_nits = std::clamp(settings.hdr_ui_nits.load(std::memory_order_relaxed),
-                                     BbSettings::HdrUiNitsMin, BbSettings::HdrUiNitsMax);
+    // peak itself — an SDR-derived 203 made HDR analysis tools report the content as 203.
+    //
+    // UI white cannot exceed the display's peak: asking for a 500-nit HUD on a 300-nit display is
+    // not a request the display can honour, and honouring it would loosen the ceiling the present
+    // applies to the whole frame (a graded scene pixel would ride up to the HUD's white) and make
+    // MaxCLL exceed MaxLuminance.
+    const float ui_white_nits =
+        std::min(std::clamp(settings.hdr_ui_nits.load(std::memory_order_relaxed),
+                            BbSettings::HdrUiNitsMin, BbSettings::HdrUiNitsMax),
+                 peak);
     swapchain.SetHdrMetadata(peak,
-                             HdrChannel::Native16()
-                                 ? std::max(peak, ui_nits)
-                                 : std::min(peak, paper_white * expand_white),
+                             HdrChannel::Native16() ? peak
+                                                    : std::min(peak, paper_white * expand_white),
                              paper_white);
     static const bool told_metadata = [] {
         const auto& s = BbSettings::Get();
@@ -931,6 +935,18 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
     (void)told_metadata;
     static const bool debug = bb_env("BB_HDR_DEBUG") != nullptr;
     const bool native16 = HdrChannel::Native16();
+    // Native+ needs the chain's float frame to carry above-white; a frame presented through an sRGB
+    // view holds decoded values that clamp at white. That happens when no upscaler redirects the
+    // display, and it is silent otherwise — say it once, because the symptom is exactly what a tone
+    // curve that produced nothing looks like (a frame pinned at paper white).
+    if (native16 && frame && frame->hdr_linear) {
+        static std::atomic<int> told_linear{0};
+        if (told_linear.fetch_add(1) < 1) {
+            std::printf("HDR native+: the frame is linear already (no upscaler redirected this "
+                        "display), so above white is clamped to paper white and the peak is not "
+                        "reached (once per run)\n");
+        }
+    }
     // Native+: what the chain made above the game's white, as the present pass samples it — this
     // frame's own, captured at PrepareFrame (see Frame::hdr_excess).
     const vk::ImageView excess_view = frame ? frame->hdr_excess : vk::ImageView{};
@@ -968,10 +984,7 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
         // Native+: the HUD and the port's own menu at UI Brightness, as a factor of paper white.
         // From the setting, not from this frame's mask: a frame without a mask (no upscaler, a
         // menu-only frame) must not drop them to paper white.
-        .ui_white = native16 ? std::clamp(settings.hdr_ui_nits.load(std::memory_order_relaxed),
-                                          BbSettings::HdrUiNitsMin, BbSettings::HdrUiNitsMax) /
-                                   std::max(paper_white, 1.0f)
-                             : 1.0f,
+        .ui_white = native16 ? ui_white_nits / std::max(paper_white, 1.0f) : 1.0f,
         // Native+: the RenoDX-style user grading (live; neutral at 1).
         .exposure = std::clamp(settings.hdr_exposure.load(std::memory_order_relaxed),
                                BbSettings::HdrGradeMin, BbSettings::HdrGradeMax),

@@ -230,6 +230,9 @@ void main() {
         linear = min(linear, vec3(peak_white));
         // The user grading (the menu's sliders), before the HUD and the display encode.
         linear = Grade(linear);
+        // Grading can lift a pixel back above the peak (exposure 2 doubles it): the scene stops at
+        // the display's peak, and the HUD's own white is applied after this.
+        linear = min(linear, vec3(peak_white));
         // The HUD (the mask in the snapshot's alpha): shown at UI Brightness — its pixels
         // brightened by the HUD's white over the game's — while the scene stays as it is.
         if ((hdr.flags & FLAG_UI_MASK) != 0u) {
@@ -292,11 +295,11 @@ void main() {
             linear = mix(under, menu_linear, clamp(menu.a * 4.0, 0.0, 1.0));
         }
     }
-    // The peak is the frame's ceiling and the metadata's MaxCLL, but two things multiply after the
-    // clamp inside the native+ branch: the user's exposure/contrast and the menu. Neither may
-    // present light the display was not told to expect, so the last word is here. UI white above the
-    // peak (hdr_ui_nits > hdr_peak) is the one deliberate exception, and the metadata follows it.
-    linear = min(linear, vec3(max(peak_white, hdr.ui_white)));
+    // The peak is the frame's ceiling and the metadata's MaxCLL, but the user's exposure/contrast
+    // and the menu both multiply after the clamp inside the native+ branch, so the last word is
+    // here. UI white is clamped to the display's peak by the presenter, so this one bound covers
+    // the scene, the HUD and the menu alike.
+    linear = min(linear, vec3(peak_white));
     if ((hdr.flags & FLAG_SCRGB) != 0u) {
         color = vec4(linear * (hdr.paper_white / 80.0), 1.0);
     } else {

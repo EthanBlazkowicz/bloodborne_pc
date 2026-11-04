@@ -654,6 +654,20 @@ int main() {
          pq(2.0f * (decode(0.5f) - 0.1f) / 0.9f * paper), pq(paper),
          pq(2.0f * (decode(0.9f) - 0.1f) / 0.9f * paper)});
 
+    // Native+ at peak 790 with exposure 0.5: the only case that can see the mid-chain clamp (the
+    // peak applied before the grade), because every floor case that binds it ends on the same
+    // ceiling. Here the 2.0 ramp clamps to 790/203 = 3.8916 and then halves to 395 nits; without
+    // that clamp it would be 466.4, and both sit below the ceiling, so nothing else hides it.
+    {
+        HdrPush shorter_peak = settings(FlagNative16, 0.0f, 0.0f, 1.0f, W, H, 0.5f);
+        shorter_peak.peak = 790.0f;
+        run(hdr10_pipeline, out_hdr10, shorter_peak,
+            {pq(decode(0.3f) * 0.5f * paper), pq(decode(0.5f) * 0.5f * paper), pq(0.5f * paper),
+             pq(decode(0.7f) * 0.5f * paper), pq(790.0f * 0.5f),
+             pq(decode(0.5f) * 0.5f * paper), pq(paper),
+             pq(decode(0.9f) * 0.5f * paper)});
+    }
+
     std::printf("HDR output: PASS\n");
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);
     vkDestroyPipeline(vk.device, scrgb_pipeline, nullptr);
