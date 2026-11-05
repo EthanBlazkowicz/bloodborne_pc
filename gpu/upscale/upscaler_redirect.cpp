@@ -320,6 +320,11 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         display.width != display_width || display.height != display_height) {
         const auto device = instance.GetDevice();
         scheduler.Finish();
+        // The image below is destroyed and remade, and the PRESENT queue reads it (the presenter is
+        // handed this image and samples it). Finish() drains the draw queue only, so idle the
+        // device: a resize at scene start otherwise pulls the image out from under an in-flight
+        // present, which the driver reports as a device lost. Resizes are rare; the stall is fine.
+        Check<"wait for the present before remaking the display image">(device.waitIdle());
         display.views.clear();
         std::printf("Display: host buffer %ux%u (live)\n", display_width, display_height);
         // Native+ HDR (render/hdr_channel.cpp): the display image is the chain's last target —
