@@ -514,4 +514,75 @@ void UpscalerDebug::ReadbackPixels(const Instance& instance, Scheduler& schedule
         device.freeMemory(memory);
     });
 }
+// The HDR10 swapchain image is A2B10G10R10_UNORM_PACK32: one 32-bit word per pixel, R in bits 0-9,
+// G in 10-19, B in 20-29. Reading it here is the only measurement that needs no capture, no DWM and
+// no decode: it is what the panel is handed.
+void UpscalerDebug::ReadbackSwapchain(const Instance& instance, Scheduler& scheduler,
+                                      vk::CommandBuffer cmdbuf, vk::Image image, u32 x, u32 y,
+                                      u32 w, u32 h, const char* name) {
+    const vk::Device device = instance.GetDevice();
+    const vk::DeviceSize bytes = vk::DeviceSize(w) * h * 4;
+    const vk::Buffer buffer =
+        Check(device.createBuffer({.size = bytes, .usage = vk::BufferUsageFlagBits::eTransferDst,
+                                   .sharingMode = vk::SharingMode::eExclusive}));
+    const auto req = device.getBufferMemoryRequirements(buffer);
+    const auto props = instance.GetPhysicalDevice().getMemoryProperties();
+    u32 type = ~0u;
+    for (u32 i = 0; i < props.memoryTypeCount; ++i) {
+        const auto flags = props.memoryTypes[i].propertyFlags;
+        const auto need =
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+        if ((req.memoryTypeBits & (1u << i)) && (flags & need) == need) {
+            type = i;
+            break;
+        }
+    }
+    if (type == ~0u) {
+        device.destroyBuffer(buffer);
+        return;
+    }
+    const vk::DeviceMemory memory =
+        Check(device.allocateMemory({.allocationSize = req.size, .memoryTypeIndex = type}));
+    Check(device.bindBufferMemory(buffer, memory, 0));
+    const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    const vk::ImageMemoryBarrier2 to_src{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .oldLayout = vk::ImageLayout::ePresentSrcKHR,
+        .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .image = image,
+        .subresourceRange = range,
+    };
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_src});
+    const vk::BufferImageCopy region{
+        .bufferOffset = 0, .bufferRowLength = 0, .bufferImageHeight = 0,
+        .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .imageOffset = {static_cast<int32_t>(x), static_cast<int32_t>(y), 0},
+        .imageExtent = {w, h, 1},
+    };
+    cmdbuf.copyImageToBuffer(image, vk::ImageLayout::eTransferSrcOptimal, buffer, region);
+    const vk::ImageMemoryBarrier2 to_present{
+        .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
+        .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .newLayout = vk::ImageLayout::ePresentSrcKHR,
+        .image = image,
+        .subresourceRange = range,
+    };
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_present});
+    scheduler.DeferOperation([device, buffer, memory, name = std::string(name), w, h] {
+        void* mapped = nullptr;
+        Check(device.mapMemory(memory, 0, VK_WHOLE_SIZE, {}, &mapped));
+        const auto* words = static_cast<const std::uint32_t*>(mapped);
+        std::printf("swapchain %s:", name.c_str());
+        for (u32 i = 0; i < w * h && i < 8; ++i) {
+            const std::uint32_t v = words[i];
+            std::printf(" (%u,%u,%u)", v & 0x3FFu, (v >> 10) & 0x3FFu, (v >> 20) & 0x3FFu);
+        }
+        std::printf("\n");
+        device.unmapMemory(memory);
+        device.destroyBuffer(buffer);
+        device.freeMemory(memory);
+    });
+}
 } // namespace Vulkan

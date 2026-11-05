@@ -24,6 +24,7 @@
 #include "render/hdr_channel.h"
 #include "render/vk_low_latency.h"
 #include "upscale/vk_frame_generation.h"
+#include "upscale/upscaler_internal.h"
 #include "upscale/vk_temporal_upscaler.h"
 #include "render/rasterizer.h"
 #include "vulkan/platform.h"
@@ -1027,6 +1028,16 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
         .subresourceRange = ColorRange,
     };
     cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_present});
+    // TEMP (BB_HDR_DUMP): what the panel is actually handed, read straight out of the swapchain.
+    // Only on frames the chain produced (an excess exists), so it samples gameplay and not the
+    // loading screen; every few seconds at 60 Hz.
+    if (bb_env("BB_HDR_DUMP") != nullptr && frame && frame->hdr_excess) {
+        static std::atomic<int> told_swap{0};
+        if (told_swap.fetch_add(1) % 240 == 0) {
+            UpscalerDebug::ReadbackSwapchain(instance, present_scheduler, cmdbuf, target, extent.width / 2,
+                                             extent.height / 2, 1, 1, "centre");
+        }
+    }
     settings.hdr_output.store(scrgb ? BbSettings::HdrOutputScRgb : BbSettings::HdrOutputHdr10,
                               std::memory_order_relaxed);
 }

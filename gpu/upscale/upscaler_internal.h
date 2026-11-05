@@ -48,6 +48,12 @@ void PrintIssues(const char* what, u64 issues);
 void ReadbackPixels(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
                     vk::Image image, u32 x, u32 y, u32 w, u32 h, const char* name);
 
+/// The same for a 10-bit HDR10 swapchain image (A2B10G10R10): copies `w` x `h` texels and prints the
+/// PQ codes exactly as the panel receives them, with no capture chain between the measurement and
+/// the display. ReadbackPixels cannot do this — it decodes RGBA16F and would print garbage here.
+void ReadbackSwapchain(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                       vk::Image image, u32 x, u32 y, u32 w, u32 h, const char* name);
+
 } // namespace Vulkan::UpscalerDebug
 
 namespace Vulkan {
