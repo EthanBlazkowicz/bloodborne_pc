@@ -971,6 +971,7 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, const Frame* frame, v
                  // and marks it fresh for this frame only; without one the frame's own values
                  // are all there is and nothing is lifted.
                  (native16 && excess_view ? HdrOutputPass::FlagExcess : 0u) |
+                 (bb_env("BB_HDR_DUMP") != nullptr ? HdrOutputPass::FlagChainView : 0u) |
                  (native16 && frame && frame->hdr_linear ? HdrOutputPass::FlagLinearFrame : 0u) |
                  (native16 && frame && frame->hdr_snapshot_ui_mask
                       ? HdrOutputPass::FlagUiMask

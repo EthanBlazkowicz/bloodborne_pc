@@ -305,8 +305,11 @@ namespace Vulkan {
 void DumpPresentedFloat16(const Instance& instance, Scheduler& scheduler,
                           vk::CommandBuffer cmdbuf, vk::Image image, u32 width, u32 height,
                           int index, const char* name, vk::Format) {
+    // 8 bytes per pixel: the image is RGBA16F. This passed 4, so a presented-frame dump copied
+    // half of each row and reported a max of 0.0 for images that plainly had content — which is
+    // exactly how it misled the investigation into the excess.
     UpscalerDebug::DumpImages(instance, scheduler, cmdbuf, index,
-                              {{image, width, height, 4, name, "rgba16f",
+                              {{image, width, height, 8, name, "rgba16f",
                                 vk::ImageAspectFlagBits::eColor, true}});
 }
 

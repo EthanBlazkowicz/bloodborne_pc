@@ -828,6 +828,13 @@ void TemporalUpscaler::RecordHdrExcessEncode(vk::CommandBuffer cmdbuf, u32 ow, u
         .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
     };
     cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &done});
+    if (bb_env("BB_HDR_DUMP") != nullptr && ow >= 3840) {
+        static std::atomic<int> told_excess_dump{0};
+        if (told_excess_dump.fetch_add(1) == 12) {
+            DumpPresentedFloat16(instance, scheduler, cmdbuf, vk::Image(hdr_excess_image), ow, oh,
+                                 901, "chain_excess", HdrChannel::Native16Format);
+        }
+    }
     // The present samples it: the layout its descriptor declares.
     const vk::ImageMemoryBarrier2 to_read{
         .srcStageMask = compute,

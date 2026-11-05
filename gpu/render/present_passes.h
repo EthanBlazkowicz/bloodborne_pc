@@ -79,6 +79,7 @@ public:
     static constexpr u32 FlagLinearFrame = 64; ///< Native+: the frame is linear already (sRGB view)
     /// Native+: binding 3 of the present holds what the chain made above white.
     static constexpr u32 FlagExcess = 512;
+    static constexpr u32 FlagChainView = 1024; ///< BB_HDR_DUMP: the excess drawn instead
 
     /// `output_format`: the HDR swapchain's format.
     void Create(vk::Device device, vk::Format output_format);
