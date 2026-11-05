@@ -63,11 +63,6 @@ void TemporalUpscaler::EnsureUiResources(u32 w, u32 h, vk::Format color, vk::For
     scheduler.Finish();
     const auto device = instance.GetDevice();
     const auto allocator = instance.GetAllocator();
-    // The UI image, its views, the HUD snapshot and the excess are destroyed below, and the PRESENT
-    // queue samples two of them. Finish() drains the draw queue only, so idle the device: recreating
-    // them at scene start otherwise pulls an image out from under an in-flight present, which the
-    // driver reports as a device lost.
-    Check<"wait for the present before remaking the UI images">(device.waitIdle());
     ui_width = w;
     ui_height = h;
     if (new_color) {

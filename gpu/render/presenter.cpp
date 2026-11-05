@@ -734,12 +734,9 @@ void Presenter::EnsureHdrTargets(vk::Extent2D extent) {
     if (hdr_game.image && hdr_extent == extent) {
         return;
     }
-    const vk::Device device = instance.GetDevice();
-    // The old targets are sampled by the present pass of a previous frame, on the present queue.
-    // This runs on that same thread but a submission may still be executing: idle before freeing.
-    Check<"wait for the present before remaking the HDR targets">(device.waitIdle());
     DestroyHdrTarget(hdr_game);
     DestroyHdrTarget(hdr_overlay);
+    const vk::Device device = instance.GetDevice();
     // Native+ (render/hdr_channel.cpp): the composite carries the chain's values above the
     // game's white — float, like the frames.
     const vk::Format format = HdrChannel::Native16() ? HdrChannel::Native16Format
