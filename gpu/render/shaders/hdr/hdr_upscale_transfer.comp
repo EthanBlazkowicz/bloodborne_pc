@@ -52,7 +52,11 @@ void main() {
     // The display pass reads this image: it holds the chain's frame, so the light above the
     // game's white is carried in the value itself rather than encoded into an alpha (which the
     // reconstruction does not preserve, and which the game's own composite never writes).
-    imageStore(excess_out, p, vec4(chain, 1.0));
+    // Display channel order: the frame this is merged with (the display image) comes out of the
+    // display copy in display order, because that pass samples the chain through the guest's
+    // component mapping, while this path builds identity views and so keeps the guest's storage
+    // order. The present merges the two per channel, so they have to agree here.
+    imageStore(excess_out, p, vec4(chain.bgr, 1.0));
     // The game's own image keeps what the game's later passes (UI, display copy) expect: white
     // is the top of the range it can hold.
     imageStore(target_img, p, vec4(clamp(chain, 0.0, 1.0), c.a));
