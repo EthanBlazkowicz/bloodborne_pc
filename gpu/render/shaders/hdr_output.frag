@@ -55,7 +55,6 @@ const uint FLAG_UI_MASK = 32u;
 const uint FLAG_LINEAR_FRAME = 64u;
 // Native+: binding 3 holds the excess above the game's white.
 const uint FLAG_EXCESS = 512u;
-const uint FLAG_CHAIN_VIEW = 1024u; // BB_HDR_DUMP: the excess as the frame, no merge
 // above the game's white it is. Magenta past 1x, blue past 2x, red past 4x, dim grey below.
 
 // Linear brightness (SDR white = 1) above which the highlights are expanded: high, so large
@@ -179,18 +178,6 @@ void main() {
             const float over = max(chain.r, max(chain.g, chain.b)) - 1.0;
             shown = over > 0.5 ? vec3(1.0, 0.0, 0.0)
                                : (over > 0.0 ? vec3(0.0, 0.0, 1.0) : vec3(1.0));
-        }
-        color = vec4(shown, 1.0);
-        return;
-    }
-    // BB_HDR_DUMP: the excess itself, decoded as if it were the frame and clamped at white. This
-    // goes through the same ChainTexel the merge uses, so a screenshot shows exactly what the merge
-    // reads — which is the only way to tell a wrong image from a wrong instrument.
-    if ((hdr.flags & FLAG_CHAIN_VIEW) != 0u && (hdr.flags & FLAG_EXCESS) != 0u) {
-        ivec2 ep;
-        vec3 shown = vec3(0.0);
-        if (ChainTexel(pixel, textureSize(excess, 0), FrameSize(), textureSize(game, 0), ep)) {
-            shown = pow(clamp(texelFetch(excess, ep, 0).rgb, vec3(0.0), vec3(1.0)), vec3(2.2));
         }
         color = vec4(shown, 1.0);
         return;
