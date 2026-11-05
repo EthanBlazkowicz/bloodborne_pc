@@ -41,6 +41,13 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
 
 void PrintIssues(const char* what, u64 issues);
 
+/// Copies `w` x `h` texels of an RGBA16F image at (x, y) into a host-visible buffer and prints their
+/// RGB once the GPU has finished the tick. The file dumps misread these images (they reported 63328
+/// for a scene, and 0.0 for images with content), so this reads them directly instead: format,
+/// extent and buffer layout are all explicit here.
+void ReadbackPixels(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                    vk::Image image, u32 x, u32 y, u32 w, u32 h, const char* name);
+
 } // namespace Vulkan::UpscalerDebug
 
 namespace Vulkan {

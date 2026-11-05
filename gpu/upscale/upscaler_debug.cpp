@@ -408,4 +408,110 @@ void TemporalUpscaler::DumpPresented(vk::Image image, u32 width, u32 height, vk:
     DumpImages(instance, scheduler, scheduler.CommandBuffer(), present_dump_index++,
                {{image, width, height, 4, "present", bgra ? "bgra" : "rgba"}});
 }
+
+// Copies a strip of an RGBA16F image into host memory and prints its RGB once the GPU has finished
+// the tick. The file dumps misread these images — they reported 63328 for a scene and 0.0 for an
+// image with content — so this reads them directly, with the format, extent and layout spelled out.
+namespace {
+float HalfToFloat(std::uint16_t h) {
+    const std::uint32_t sign = (h & 0x8000u) << 16;
+    std::uint32_t exponent = (h >> 10) & 0x1Fu;
+    const std::uint32_t mantissa = h & 0x3FFu;
+    if (exponent == 0) {
+        if (mantissa == 0) {
+            return std::bit_cast<float>(sign);
+        }
+        // Subnormal: normalise into the float exponent range.
+        exponent = 1;
+        std::uint32_t m = mantissa;
+        while ((m & 0x400u) == 0) {
+            m <<= 1;
+            --exponent;
+        }
+        m &= 0x3FFu;
+        const std::uint32_t bits = sign | ((exponent + 112u) << 23) | (m << 13);
+        return std::bit_cast<float>(bits);
+    }
+    if (exponent == 0x1Fu) {
+        const std::uint32_t bits = sign | 0x7F800000u | (mantissa << 13);
+        return std::bit_cast<float>(bits);
+    }
+    const std::uint32_t bits = sign | ((exponent + 112u) << 23) | (mantissa << 13);
+    return std::bit_cast<float>(bits);
+}
+} // namespace
+
+void UpscalerDebug::ReadbackPixels(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                    vk::Image image, u32 x, u32 y, u32 w, u32 h, const char* name) {
+    const vk::Device device = instance.GetDevice();
+    const vk::DeviceSize bytes = vk::DeviceSize(w) * h * 8;
+    const vk::Buffer buffer =
+        Check(device.createBuffer({.size = bytes,
+                                   .usage = vk::BufferUsageFlagBits::eTransferDst,
+                                   .sharingMode = vk::SharingMode::eExclusive}));
+    const auto req = device.getBufferMemoryRequirements(buffer);
+    const auto props = instance.GetPhysicalDevice().getMemoryProperties();
+    u32 type = ~0u;
+    for (u32 i = 0; i < props.memoryTypeCount; ++i) {
+        const auto flags = props.memoryTypes[i].propertyFlags;
+        const auto need =
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+        if ((req.memoryTypeBits & (1u << i)) && (flags & need) == need) {
+            type = i;
+            break;
+        }
+    }
+    if (type == ~0u) {
+        device.destroyBuffer(buffer);
+        return;
+    }
+    const vk::DeviceMemory memory =
+        Check(device.allocateMemory({.allocationSize = req.size, .memoryTypeIndex = type}));
+    Check(device.bindBufferMemory(buffer, memory, 0));
+    const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    const vk::ImageMemoryBarrier2 to_src{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .oldLayout = vk::ImageLayout::eGeneral,
+        .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .image = image,
+        .subresourceRange = range,
+    };
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_src});
+    const vk::BufferImageCopy region{
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .imageOffset = {static_cast<int32_t>(x), static_cast<int32_t>(y), 0},
+        .imageExtent = {w, h, 1},
+    };
+    cmdbuf.copyImageToBuffer(image, vk::ImageLayout::eTransferSrcOptimal, buffer, region);
+    const vk::ImageMemoryBarrier2 to_general{
+        .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .newLayout = vk::ImageLayout::eGeneral,
+        .image = image,
+        .subresourceRange = range,
+    };
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_general});
+    scheduler.DeferOperation([device, buffer, memory, name = std::string(name), w, h] {
+        void* mapped = nullptr;
+        Check(device.mapMemory(memory, 0, VK_WHOLE_SIZE, {}, &mapped));
+        const auto* texels = static_cast<const std::uint16_t*>(mapped);
+        for (u32 row = 0; row < h; ++row) {
+            std::printf("readback %s row %u:", name.c_str(), row);
+            for (u32 i = 0; i < w; ++i) {
+                const std::uint16_t* t = texels + (row * w + i) * 4;
+                std::printf(" (%.4f,%.4f,%.4f)", HalfToFloat(t[0]), HalfToFloat(t[1]),
+                            HalfToFloat(t[2]));
+            }
+            std::printf("\n");
+        }
+        device.unmapMemory(memory);
+        device.destroyBuffer(buffer);
+        device.freeMemory(memory);
+    });
+}
 } // namespace Vulkan
