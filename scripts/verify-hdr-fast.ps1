@@ -18,6 +18,9 @@ Add-Type -AssemblyName Microsoft.VisualBasic
 Add-Type -AssemblyName System.Drawing
 
 $t0 = Get-Date
+# The whole run has one minute: the port either reaches the level and renders in that time or
+# something is wrong, and waiting longer only hides it behind a timeout.
+$deadline = $t0.AddSeconds(60)
 $exe = Join-Path $DataRoot 'Bloodborne.exe'
 $logDir = Join-Path $DataRoot 'logs'
 $stamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
@@ -84,7 +87,7 @@ if ($stale.Count -gt 0) {
 
 try {
     $launcher = Start-Process -FilePath $exe -WorkingDirectory $DataRoot -PassThru
-    $end = (Get-Date).AddSeconds(40)
+    $end = [Math]::Min((Get-Date).AddSeconds(40).Ticks, $deadline.Ticks) | ForEach-Object { [datetime]$_ }
     while ((Get-Date) -lt $end) {
         $launcher.Refresh()
         if ($launcher.MainWindowHandle -ne 0) { break }
@@ -106,7 +109,7 @@ try {
         $null = Send-Keys '{ENTER}'
     }
 
-    $end = (Get-Date).AddSeconds(120)
+    $end = [Math]::Min((Get-Date).AddSeconds(120).Ticks, $deadline.Ticks) | ForEach-Object { [datetime]$_ }
     while ((Get-Date) -lt $end) {
         $gameProc = Get-Process -Name 'bb-probe' -ErrorAction SilentlyContinue |
                     Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
@@ -118,7 +121,7 @@ try {
 
     # The start screen: wait for the port's own "splash screen hidden" line (the title/menu is
     # up), then the user's two Enters. "Menu pointer: menus closed" is the game answering them.
-    $end = (Get-Date).AddSeconds(120)
+    $end = [Math]::Min((Get-Date).AddSeconds(120).Ticks, $deadline.Ticks) | ForEach-Object { [datetime]$_ }
     $menu = $false
     while ((Get-Date) -lt $end) {
         $log = Get-NewLog
@@ -140,7 +143,7 @@ try {
     $null = Send-Keys '{ENTER}'
 
     # The level: the port prints this the first time the scene renders at its own size.
-    $end = (Get-Date).AddSeconds(180)
+    $end = [Math]::Min((Get-Date).AddSeconds(180).Ticks, $deadline.Ticks) | ForEach-Object { [datetime]$_ }
     $level = $false
     while ((Get-Date) -lt $end) {
         $log = Get-NewLog
@@ -151,6 +154,12 @@ try {
         Start-Sleep -Milliseconds 150
     }
     Note ('level marker: ' + $level)
+    if (-not $level) {
+        # The whole budget is one minute: no level by then means the run is wrong, not slow. Say it
+        # and stop rather than screenshot whatever is on screen.
+        Note 'no level within the minute: the run is wrong (hang, crash at scene start, or a menu)'
+        throw 'the level never rendered'
+    }
 
     Start-Sleep -Seconds $SettleSeconds
     for ($i = 0; $i -lt $ShotCount; $i++) {
@@ -169,7 +178,7 @@ try {
         if ($gameProc) {
             $gameProc.Refresh()
             if ($gameProc.MainWindowHandle -ne 0) { $gameProc.CloseMainWindow() | Out-Null }
-            $end = (Get-Date).AddSeconds(10)
+            $end = [Math]::Min((Get-Date).AddSeconds(10).Ticks, $deadline.Ticks) | ForEach-Object { [datetime]$_ }
             while (-not $gameProc.HasExited -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 200; $gameProc.Refresh() }
             if (-not $gameProc.HasExited) {
                 Stop-Tree $gameProc.Id
