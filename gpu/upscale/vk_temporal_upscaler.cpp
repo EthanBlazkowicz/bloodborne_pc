@@ -886,6 +886,7 @@ void TemporalUpscaler::RunScaled() {
     // P1 diagnostic: the format the reconstruction actually samples. A view over the chain's
     // float image created with the guest's 8-bit format reads UNORM and clamps at white, which is
     // the symptom this port kept measuring; this line says which one is in use.
+    vk::Format sampled_backing = color.backing->image.image_ci.format;
     vk::Format upscaler_input_format = color.info.pixel_format;
     if (ProxiesOn()) {
         VideoCore::ImageViewInfo ci, di;
@@ -900,6 +901,22 @@ void TemporalUpscaler::RunScaled() {
         depth_view = dp.view;
         source_width = w;
         source_height = h;
+    } else if (HdrChannel::Native16Fixed() && scene_targets.OwnSize(color)) {
+        // The chain drew this target into its own-size float proxy (raster_targets.cpp's own_size
+        // pass), so the guest image beside it holds nothing and is 8-bit. Reading that image
+        // through a 16F view is what produced the garbage: the GPU took bytes for half-floats.
+        // The upscaler must read the proxy, which is the image the chain actually wrote.
+        VideoCore::ImageViewInfo ci;
+        ci.format = HdrChannel::Native16Format;
+        const auto cp = scene_targets.Read(ldr_target, ci);
+        color_image = cp.image;
+        color_view = cp.view;
+        upscaler_input_format = HdrChannel::Native16Format;
+        sampled_backing = HdrChannel::Native16Format;
+        depth_view = CachedView(depth, depth_format, vk::ImageAspectFlagBits::eDepth);
+        runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                        vk::AccessFlagBits2::eShaderRead);
+        runtime.FlushBarriers();
     } else {
         depth_view = CachedView(depth, depth_format, vk::ImageAspectFlagBits::eDepth);
         // Native+: the chain's image is a float proxy, so its view has to be float too. A view
