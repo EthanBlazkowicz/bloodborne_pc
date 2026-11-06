@@ -7,6 +7,7 @@
 #include <mutex>
 #include "shim/bb_env.h"
 #include <set>
+#include <unordered_set>
 #include <string>
 #include <filesystem>
 #include "bbport_settings.h"
@@ -817,8 +818,38 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                     swap |= 16u;
                 }
             }
-            hdr_bb = {swap, std::bit_cast<u32>(HdrChannel::Knee()), 0u,
-                      std::bit_cast<u32>(bloom)};
+            // The display copy fills the frame it is drawn into (render/shaders/hdr/bb_display_copy.frag):
+            // the game's own copy fetches its source a texel per pixel, which fills the guest's
+            // display buffer because that buffer is the source's size — but the port made that
+            // buffer its own image, at the output size, so the copy needs the extent it is filling
+            // (its source's it measures itself, which also covers the upscaler's own image being
+            // bound in place of the guest's). Its fragment shader has no vertex input to take a UV
+            // from (the game's display copy draws without one), so the target's extent goes into
+            // bb_hdr.z, which nothing else reads (it carried the chain probe until 45b481c; the
+            // delta pass pushes its own words). Packed as scene_size is.
+            u32 hdr_y = std::bit_cast<u32>(HdrChannel::Knee());
+            u32 hdr_z = 0u;
+            if (ps_info->pgm_hash == 0x38d65b32ull) {
+                // This draw's render target, which is where gl_FragCoord ends (ApplyTargetRedirect's
+                // extent: the display image, or the guest's buffer where it is not redirected).
+                hdr_z = (state.width & 0xFFFFu) | ((state.height & 0xFFFFu) << 16);
+                // One line per size first seen: the run's record of what the copy was asked to
+                // fill, which the log has no other trace of (the source's extent is the shader's).
+                static std::mutex told_mutex;
+                static std::unordered_set<u32> told;
+                std::scoped_lock lock{told_mutex};
+                if (told.size() < 6 && told.insert(hdr_z).second) {
+                    const auto& cb = regs.color_buffers[0];
+                    if (cb) {
+                        std::printf("Display copy: fills %ux%u (guest buffer %ux%u)\n", state.width,
+                                    state.height, cb.Pitch(), cb.Height());
+                    } else {
+                        std::printf("Display copy: fills %ux%u (no guest colour buffer)\n",
+                                    state.width, state.height);
+                    }
+                }
+            }
+            hdr_bb = {swap, hdr_y, hdr_z, std::bit_cast<u32>(bloom)};
             hdr_bb_set = true;
         }
     }

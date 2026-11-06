@@ -49,10 +49,33 @@ float brightness(float v, float row) {
     return v >= 0.0 ? table(v, row) : 2.0 * table(0.0, row) - table(-v, row);
 }
 
+// A size as the push constants carry it (scene_size's packing: width | height << 16).
+uvec2 extent(uint packed) {
+    return uvec2(packed & 65535u, packed >> 16u);
+}
+
 void main() {
-    uint w = push_data.scene_size & 65535u;
-    uint h = push_data.scene_size >> 16u;
-    vec2 scale = vec2(1920.0 / float(w == 0u ? 1920u : w), 1080.0 / float(h == 0u ? 1080u : h));
+    // The copy fills the target, as the game's own copy fills its display buffer: there the buffer
+    // is the source's size, so a texel per pixel does it. The port made that buffer its own image,
+    // at the output size, and the source can be smaller (the loading screen's frame against the
+    // display image), where a 1:1 copy filled only the frame's top-left quarter. scene_size is 0 on
+    // this draw — a display copy is no reduced pass — so the scale the guest's formula gave here
+    // was 1 and never helped.
+    //
+    // The source's extent is the image actually bound, its view's: the guest's own image is created
+    // at its visible extent (the padded allocation is a layout, textures/image.cpp), and where the
+    // upscaler redirects this read to its own image that image is the one measured here (it is at
+    // the target's size, so this is a 1:1 copy, which is what the UI needs). The target's comes
+    // from the rasterizer in bb_hdr.z, per draw; nothing else reads that word (it carried the chain
+    // probe until 45b481c).
+    const uvec2 source = uvec2(textureSize(sampler2D(fs_img0, fs_samp0), 0));
+    const uvec2 target = extent(push_data.bb_hdr.z);
+    // No target: a 1:1 copy, which is what this shader was before the display buffer became the
+    // port's. Where the source's grid is at least the target's, its own texels are used as they
+    // are too (the guest's texel fetch): a larger source is not squeezed into the frame.
+    const vec2 scale = target.x == 0u || target.y == 0u
+                           ? vec2(1.0)
+                           : vec2(min(source, target)) / vec2(target);
     vec4 v = texelFetch(fs_img0, ivec2(floor(gl_FragCoord.xy * scale)), 0);
     // The chain's order is set by the colour table (bb_color_grading.frag); the display buffer
     // takes it as it comes. Converting here would also convert the UI, which the game composites

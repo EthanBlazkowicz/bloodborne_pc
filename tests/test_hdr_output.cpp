@@ -3,7 +3,9 @@
 // The HDR output encode (render/shaders/hdr_output.frag) on a synthetic row, on this machine's
 // GPU: the 2.2 decode, expand, the native+ pass-through above the game's white, the black floor,
 // the HUD mask (UI Brightness), the menu compose and the PQ / scRGB encodes, against mirrored
-// math. Self-contained (dynamic-loaded Vulkan; only the generated shader headers).
+// math. Then the display copy (render/shaders/hdr/bb_display_copy.frag): the extents it maps the
+// chain's frame with, where a 1:1 copy left the loading screen in the frame's top-left quarter.
+// Self-contained (dynamic-loaded Vulkan; only the generated shader headers).
 #include <cassert>
 #include <algorithm>
 #include <array>
@@ -19,6 +21,7 @@ using u8 = std::uint8_t;
 using s32 = std::int32_t;
 #include "bbgpu/shaders/fullscreen_vert.h"
 #include "bbgpu/shaders/hdr_output_frag.h"
+#include "bbgpu/shaders/bb_display_copy_frag.h"
 #include <bit>
 
 // float -> IEEE half bits (the 16F images' texels in an upload buffer are halfs).
@@ -325,12 +328,13 @@ int main() {
     VkShaderModule vertex = MakeModule(vk.device, FULLSCREEN_VERT, std::size(FULLSCREEN_VERT));
     VkShaderModule fragment = MakeModule(vk.device, HDR_OUTPUT_FRAG, std::size(HDR_OUTPUT_FRAG));
 
-    const auto make_pipeline = [&](VkFormat format) {
+    const auto make_pipeline_for = [&](VkShaderModule fragment_module, VkPipelineLayout pipeline_layout,
+                                       VkFormat format) {
         const VkPipelineShaderStageCreateInfo stages[2]{
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
              VK_SHADER_STAGE_VERTEX_BIT, vertex, "main", nullptr},
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
-             VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main", nullptr}};
+             VK_SHADER_STAGE_FRAGMENT_BIT, fragment_module, "main", nullptr}};
         const VkPipelineRenderingCreateInfo rendering{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
             .colorAttachmentCount = 1,
@@ -375,15 +379,16 @@ int main() {
                                                 .pMultisampleState = &multisample,
                                                 .pColorBlendState = &blend,
                                                 .pDynamicState = &dynamic,
-                                                .layout = layout};
+                                                .layout = pipeline_layout};
         VkPipeline pipeline{};
         CHECK(vkCreateGraphicsPipelines(vk.device, {}, 1, &info, nullptr, &pipeline));
         return pipeline;
     };
+    const auto make_pipeline = [&](VkFormat format) {
+        return make_pipeline_for(fragment, layout, format);
+    };
     VkPipeline hdr10_pipeline = make_pipeline(VK_FORMAT_A2B10G10R10_UNORM_PACK32);
     VkPipeline scrgb_pipeline = make_pipeline(VK_FORMAT_R16G16B16A16_SFLOAT);
-    vkDestroyShaderModule(vk.device, vertex, nullptr);
-    vkDestroyShaderModule(vk.device, fragment, nullptr);
 
     VkSampler sampler{};
     const VkSamplerCreateInfo sampler_info{.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -724,7 +729,311 @@ int main() {
              pq(paper), pq(decode(0.5f) * paper), pq(paper), pq(decode(0.9f) * paper)});
     }
 
+    // --- The display copy's extents (render/shaders/hdr/bb_display_copy.frag) ---------------------
+    // The game's own display copy is a 1:1 fetch: its display buffer is the size of the frame it
+    // copies. The port's display buffer is its own image, at the output size, so the copy has to
+    // fill it from whatever source it is handed. With the old scale (scene_size-derived, and that is
+    // 0 on this draw — a display copy is no reduced pass) the loading screen filled only the
+    // top-left quarter of the frame; these cases pin the mapping. The shader measures the source it
+    // is actually bound (its view's extent), and takes the target's from bb_hdr.z, which the
+    // rasterizer pushes per draw (packed as scene_size is: width | height << 16).
+    {
+        constexpr u32 source_width = 4, source_height = 2;
+        // The target of the first cases, and a source larger than a target (a source bound at the
+        // output size, the target not).
+        constexpr u32 large_width = 8, large_height = 4;
+        constexpr u32 table_size = 1024;
+        constexpr u32 table_layers = 4; ///< the shader's three rows (one per channel) plus slack
+        // The push block's extent: bb_hdr ends at 144. Only bb_hdr.z matters to this shader.
+        constexpr u32 push_dwords = 36;
+        constexpr u32 bb_hdr_at = 32; ///< offset 128 / 4
+        const auto pack = [](u32 w, u32 h) { return (w & 0xFFFFu) | ((h & 0xFFFFu) << 16); };
+        // The source's texel values, exact in half: red by column, green by row.
+        const auto source_texel = [](u32 x, u32 y) {
+            return std::array<float, 4>{0.25f * float(x + 1u), 0.5f + 0.25f * float(y), 0.125f, 1.0f};
+        };
+
+        Image copy_source = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                      source_width, source_height, 0);
+        Image copy_target = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                      large_width, large_height, 0);
+        Image copy_square = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                      source_width, source_height, 0);
+        Image copy_large = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                     large_width, large_height, 0);
+        // A source of its own for the equal-size case: sampling the image being rendered into would
+        // be a feedback loop (no VK_EXT_attachment_feedback_loop_layout here), and a case that never
+        // draws cannot tell a correct 1:1 copy from no copy at all.
+        Image copy_equal = MakeImage(vk, memory_properties, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                     source_width, source_height, 0);
+        // The brightness table (a 1D array, one row per channel), the identity: the cases are about
+        // the copy's geometry, not the curve. Its rows run to 3 layers' worth of channel index.
+        Image copy_table{.format = VK_FORMAT_R16G16B16A16_SFLOAT};
+        {
+            const VkImageCreateInfo info{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_1D,
+                .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                .extent = {table_size, 1, 1},
+                .mipLevels = 1,
+                .arrayLayers = table_layers,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+            CHECK(vkCreateImage(vk.device, &info, nullptr, &copy_table.image));
+            VkMemoryRequirements requirements;
+            vkGetImageMemoryRequirements(vk.device, copy_table.image, &requirements);
+            const VkMemoryAllocateInfo allocation{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = requirements.size,
+                .memoryTypeIndex = MemoryType(memory_properties, requirements.memoryTypeBits,
+                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)};
+            CHECK(vkAllocateMemory(vk.device, &allocation, nullptr, &copy_table.memory));
+            CHECK(vkBindImageMemory(vk.device, copy_table.image, copy_table.memory, 0));
+            const VkImageViewCreateInfo view{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = copy_table.image,
+                .viewType = VK_IMAGE_VIEW_TYPE_1D_ARRAY,
+                .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, table_layers}};
+            CHECK(vkCreateImageView(vk.device, &view, nullptr, &copy_table.view));
+        }
+        Buffer copy_upload = MakeBuffer(vk, memory_properties, large_width * large_height * 16);
+        Buffer table_upload = MakeBuffer(vk, memory_properties, table_size * table_layers * 16);
+        Buffer copy_read = MakeBuffer(vk, memory_properties, large_width * large_height * 16);
+        {
+            // The pattern tiles the larger extent too, so one buffer serves every source image.
+            auto* texels = static_cast<u16*>(copy_upload.mapped);
+            for (u32 y = 0; y < large_height; ++y) {
+                for (u32 x = 0; x < large_width; ++x) {
+                    const auto value = source_texel(x % source_width, y % source_height);
+                    for (u32 c = 0; c < 4; ++c) {
+                        texels[(y * large_width + x) * 4 + c] = Half(value[c]);
+                    }
+                }
+            }
+            auto* table = static_cast<u16*>(table_upload.mapped);
+            for (u32 layer = 0; layer < table_layers; ++layer) {
+                for (u32 i = 0; i < table_size; ++i) {
+                    const float value = float(i) / float(table_size - 1);
+                    for (u32 c = 0; c < 4; ++c) {
+                        table[(layer * table_size + i) * 4 + c] = Half(value);
+                    }
+                }
+            }
+        }
+
+        // The copy's own descriptor set: two images and a sampler, as the replaced shader declares
+        // them (its bindings are the game's, copied onto this SPIR-V).
+        const VkDescriptorSetLayoutBinding copy_bindings[3]{
+            {0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {2, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
+        const VkDescriptorSetLayoutCreateInfo copy_set_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 3,
+            .pBindings = copy_bindings};
+        VkDescriptorSetLayout copy_set_layout{};
+        CHECK(vkCreateDescriptorSetLayout(vk.device, &copy_set_info, nullptr, &copy_set_layout));
+        const VkDescriptorPoolSize copy_pool_sizes[2]{
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8}, {VK_DESCRIPTOR_TYPE_SAMPLER, 4}};
+        const VkDescriptorPoolCreateInfo copy_pool_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+            .maxSets = 8,
+            .poolSizeCount = 2,
+            .pPoolSizes = copy_pool_sizes};
+        VkDescriptorPool copy_pool{};
+        CHECK(vkCreateDescriptorPool(vk.device, &copy_pool_info, nullptr, &copy_pool));
+        const VkPushConstantRange copy_push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, push_dwords * 4};
+        const VkPipelineLayoutCreateInfo copy_layout_info{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            .pSetLayouts = &copy_set_layout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &copy_push};
+        VkPipelineLayout copy_layout{};
+        CHECK(vkCreatePipelineLayout(vk.device, &copy_layout_info, nullptr, &copy_layout));
+        // Clamped, so the table's top entry is read at the input's 1.0 (: the port's own sampler is
+        // the game's; this one only has to be well defined at the ends).
+        VkSampler copy_sampler{};
+        const VkSamplerCreateInfo copy_sampler_info{
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_LINEAR,
+            .minFilter = VK_FILTER_LINEAR,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE};
+        CHECK(vkCreateSampler(vk.device, &copy_sampler_info, nullptr, &copy_sampler));
+        VkShaderModule copy_fragment =
+            MakeModule(vk.device, BB_DISPLAY_COPY_FRAG, std::size(BB_DISPLAY_COPY_FRAG));
+        VkPipeline copy_pipeline =
+            make_pipeline_for(copy_fragment, copy_layout, VK_FORMAT_R16G16B16A16_SFLOAT);
+
+        const auto general = [&](VkImage image) {
+            Barrier(vk.cmd, image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        };
+        const auto copy_case = [&](const Image& source, u32 source_w, u32 source_h, const Image& out,
+                                   u32 out_width, u32 out_height, u32 pushed_target) {
+            VkDescriptorSet set{};
+            const VkDescriptorSetAllocateInfo allocate{
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                .descriptorPool = copy_pool,
+                .descriptorSetCount = 1,
+                .pSetLayouts = &copy_set_layout};
+            CHECK(vkAllocateDescriptorSets(vk.device, &allocate, &set));
+            const VkDescriptorImageInfo images[2]{
+                {VK_NULL_HANDLE, source.view, VK_IMAGE_LAYOUT_GENERAL},
+                {VK_NULL_HANDLE, copy_table.view, VK_IMAGE_LAYOUT_GENERAL}};
+            const VkDescriptorImageInfo sampler_info_descriptor{
+                copy_sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+            const VkWriteDescriptorSet writes[3]{
+                {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = 0,
+                 .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                 .pImageInfo = &images[0]},
+                {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = 1,
+                 .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                 .pImageInfo = &images[1]},
+                {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = 2,
+                 .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+                 .pImageInfo = &sampler_info_descriptor}};
+            vkUpdateDescriptorSets(vk.device, 3, writes, 0, nullptr);
+            CHECK(vkResetCommandBuffer(vk.cmd, 0));
+            const VkCommandBufferBeginInfo begin{
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+            CHECK(vkBeginCommandBuffer(vk.cmd, &begin));
+            general(source.image);
+            general(copy_table.image);
+            const VkBufferImageCopy source_copy{
+                .bufferRowLength = large_width, // the upload is tiled at the larger extent
+                .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                .imageExtent = {source_w, source_h, 1}};
+            vkCmdCopyBufferToImage(vk.cmd, copy_upload.buffer, source.image,
+                                   VK_IMAGE_LAYOUT_GENERAL, 1, &source_copy);
+            const VkBufferImageCopy table_copy{
+                .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, table_layers},
+                .imageExtent = {table_size, 1, 1}};
+            vkCmdCopyBufferToImage(vk.cmd, table_upload.buffer, copy_table.image,
+                                   VK_IMAGE_LAYOUT_GENERAL, 1, &table_copy);
+            Barrier(vk.cmd, out.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            const VkRenderingAttachmentInfo attachment{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .imageView = out.view,
+                .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
+            const VkRenderingInfo rendering{.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+                                            .renderArea = {{0, 0}, {out_width, out_height}},
+                                            .layerCount = 1,
+                                            .colorAttachmentCount = 1,
+                                            .pColorAttachments = &attachment};
+            vkCmdBeginRendering(vk.cmd, &rendering);
+            vkCmdBindPipeline(vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, copy_pipeline);
+            vkCmdBindDescriptorSets(vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, copy_layout, 0, 1, &set,
+                                    0, nullptr);
+            std::array<u32, push_dwords> push{};
+            push[bb_hdr_at + 2] = pushed_target;
+            vkCmdPushConstants(vk.cmd, copy_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, push_dwords * 4,
+                               push.data());
+            const VkViewport viewport{0.0f, 0.0f, float(out_width), float(out_height), 0.0f, 1.0f};
+            const VkRect2D scissor{{0, 0}, {out_width, out_height}};
+            vkCmdSetViewport(vk.cmd, 0, 1, &viewport);
+            vkCmdSetScissor(vk.cmd, 0, 1, &scissor);
+            vkCmdDraw(vk.cmd, 3, 1, 0, 0);
+            vkCmdEndRendering(vk.cmd);
+            Barrier(vk.cmd, out.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                    VK_ACCESS_2_TRANSFER_READ_BIT);
+            const VkBufferImageCopy read_copy{.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                              .imageExtent = {out_width, out_height, 1}};
+            vkCmdCopyImageToBuffer(vk.cmd, out.image, VK_IMAGE_LAYOUT_GENERAL, copy_read.buffer, 1,
+                                   &read_copy);
+            CHECK(vkEndCommandBuffer(vk.cmd));
+            const VkSubmitInfo submit{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                                      .commandBufferCount = 1,
+                                      .pCommandBuffers = &vk.cmd};
+            CHECK(vkQueueSubmit(vk.queue, 1, &submit, {}));
+            CHECK(vkQueueWaitIdle(vk.queue));
+            vkFreeDescriptorSets(vk.device, copy_pool, 1, &set);
+
+            // What the shader's mapping has to give, mirrored: no target pushed is a 1:1 copy;
+            // else the source's own extent (measured by the shader from the view it is bound),
+            // clamped to the target's, stretched over it.
+            const bool one_to_one = pushed_target == 0;
+            const float scale_x = one_to_one
+                                      ? 1.0f
+                                      : float(std::min(source_w, out_width)) / float(out_width);
+            const float scale_y = one_to_one
+                                      ? 1.0f
+                                      : float(std::min(source_h, out_height)) / float(out_height);
+            const auto* halves = static_cast<const u16*>(copy_read.mapped);
+            for (u32 y = 0; y < out_height; ++y) {
+                for (u32 x = 0; x < out_width; ++x) {
+                    const u32 sx = u32(std::floor((float(x) + 0.5f) * scale_x));
+                    const u32 sy = u32(std::floor((float(y) + 0.5f) * scale_y));
+                    // Every case here keeps the fetch inside the source. The pattern tiles, so a
+                    // wrong scale that points outside still gets a value to fail on instead of an
+                    // undefined fetch (robustImageAccess is not requested).
+                    const auto expected = source_texel(sx % source_width, sy % source_height);
+                    for (u32 c = 0; c < 4; ++c) {
+                        const float got = FromHalf(halves[(y * out_width + x) * 4 + c]);
+                        if (std::abs(got - expected[c]) > 0.002f) {
+                            std::fprintf(stderr,
+                                         "Display copy regression: case %u pixel (%u,%u) channel %u: "
+                                         "actual %.5f, expected %.5f (source texel %u,%u)\n",
+                                         case_index, x, y, c, got, expected[c], sx, sy);
+                            std::fflush(stderr);
+                        }
+                        assert(std::abs(got - expected[c]) <= 0.002f);
+                    }
+                }
+            }
+            std::printf("HDR output: case %u PASS\n", case_index);
+            ++case_index;
+        };
+
+        // The source is half the target's size in each axis (the loading screen's frame against the
+        // port's display image): it must fill the target, 2x2 blocks of its own texels.
+        copy_case(copy_source, source_width, source_height, copy_target, 8, 4, pack(8, 4));
+        // The same sizes: a 1:1 copy, which is the game's own case and must not change.
+        copy_case(copy_equal, source_width, source_height, copy_square, source_width, source_height,
+                  pack(source_width, source_height));
+        // A source larger than the target (a frame at the output size with a smaller target): its
+        // own texels, 1:1, are used — a box filter would be a different picture, not this copy's.
+        copy_case(copy_large, large_width, large_height, copy_square, source_width, source_height,
+                  pack(source_width, source_height));
+        // No target pushed (the rasterizer cannot say: 0): 1:1, what this shader was before the
+        // display buffer became the port's own image. Equal sizes, so no fetch leaves the source
+        // (an out-of-range texelFetch is undefined and no case here relies on one).
+        copy_case(copy_source, source_width, source_height, copy_square, source_width, source_height,
+                  0);
+
+        vkDestroyPipeline(vk.device, copy_pipeline, nullptr);
+        vkDestroyShaderModule(vk.device, copy_fragment, nullptr);
+        vkDestroyPipelineLayout(vk.device, copy_layout, nullptr);
+        vkDestroyDescriptorSetLayout(vk.device, copy_set_layout, nullptr);
+        vkDestroyDescriptorPool(vk.device, copy_pool, nullptr);
+        vkDestroySampler(vk.device, copy_sampler, nullptr);
+        for (const Image* image : {&copy_source, &copy_target, &copy_square, &copy_large,
+                                   &copy_equal, &copy_table}) {
+            Destroy(vk, *image);
+        }
+        for (const Buffer* buffer : {&copy_upload, &table_upload, &copy_read}) {
+            vkDestroyBuffer(vk.device, buffer->buffer, nullptr);
+            vkFreeMemory(vk.device, buffer->memory, nullptr);
+        }
+    }
+
     std::printf("HDR output: PASS\n");
+    vkDestroyShaderModule(vk.device, vertex, nullptr);
+    vkDestroyShaderModule(vk.device, fragment, nullptr);
     vkDestroyPipeline(vk.device, hdr10_pipeline, nullptr);
     vkDestroyPipeline(vk.device, scrgb_pipeline, nullptr);
     vkDestroyPipelineLayout(vk.device, layout, nullptr);
